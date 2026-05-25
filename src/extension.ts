@@ -421,6 +421,64 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("cherryPick", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const hash = params.hash as string;
+    await gitService.cherryPick(hash);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("checkoutCommit", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const hash = params.hash as string;
+    await gitService.checkoutCommit(hash);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("resetToCommit", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const hash = params.hash as string;
+    const mode = params.mode as "soft" | "mixed" | "hard";
+    await gitService.resetToCommit(hash, mode);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("revertCommit", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const hash = params.hash as string;
+    await gitService.revertCommit(hash);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("createBranchFromCommit", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const branchName = params.branchName as string;
+    const hash = params.hash as string;
+    await gitService.createBranchFromCommit(branchName, hash);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("createTag", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const tagName = params.tagName as string;
+    const hash = params.hash as string;
+    const message = params.message as string | undefined;
+    await gitService.createTag(tagName, hash, message);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
+  messageRouter.handle("copyToClipboard", async (params) => {
+    const text = params.text as string;
+    await vscode.env.clipboard.writeText(text);
+    return { success: true };
+  });
+
   // 7. GitWatcher (only if GitService is available)
   if (gitService && workspaceRoot) {
     const watcher = new GitWatcher(

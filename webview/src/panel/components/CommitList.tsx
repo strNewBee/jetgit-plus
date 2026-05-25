@@ -1,7 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useModifierClickSelection } from "../../shared/hooks/useModifierClickSelection";
 import { usePanelStore } from "../../shared/store/panel-store";
+import type { Commit } from "../../shared/types/git";
+import { CommitContextMenu } from "./CommitContextMenu";
 import { CommitRow } from "./CommitRow";
 
 const ROW_HEIGHT = 28;
@@ -21,6 +23,23 @@ export function CommitList({
   const selectCommit = usePanelStore((s) => s.selectCommit);
 
   const parentRef = useRef<HTMLDivElement>(null);
+
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    commit: Commit;
+  } | null>(null);
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, commit: Commit) => {
+      setContextMenu({ x: e.clientX, y: e.clientY, commit });
+    },
+    [],
+  );
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
 
   const maxColumn = Math.max(
     0,
@@ -93,11 +112,20 @@ export function CommitList({
                 lane={lane}
                 graphWidth={graphWidth}
                 onCommitClick={handleCommitClick}
+                onContextMenu={handleContextMenu}
               />
             </div>
           );
         })}
       </div>
+      {contextMenu && (
+        <CommitContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          commit={contextMenu.commit}
+          onClose={closeContextMenu}
+        />
+      )}
     </div>
   );
 }

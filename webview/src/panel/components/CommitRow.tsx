@@ -66,11 +66,13 @@ export function CommitRow({
   lane,
   graphWidth,
   onCommitClick,
+  onContextMenu,
 }: {
   commit: Commit;
   lane: LaneInfo | undefined;
   graphWidth: number;
   onCommitClick: (event: React.MouseEvent, hash: string) => void;
+  onContextMenu?: (event: React.MouseEvent, commit: Commit) => void;
 }) {
   const selectedCommitHashes = usePanelStore((s) => s.selectedCommitHashes);
   const setHoveredColumn = usePanelStore((s) => s.setHoveredColumn);
@@ -85,6 +87,13 @@ export function CommitRow({
       ref={rowRef}
       className={`selectable-row${isSelected ? " selected" : ""}`}
       onClick={(event) => onCommitClick(event, commit.hash)}
+      onContextMenu={(e) => {
+        if (onContextMenu) {
+          e.preventDefault();
+          e.stopPropagation();
+          onContextMenu(e, commit);
+        }
+      }}
       onMouseEnter={() => setHoveredColumn(col)}
       onMouseLeave={() => setHoveredColumn(null)}
       style={{

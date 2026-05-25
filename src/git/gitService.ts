@@ -481,6 +481,50 @@ export class GitService {
     this.invalidateCache();
   }
 
+  async cherryPick(hash: string): Promise<void> {
+    await this.execGit(["cherry-pick", hash]);
+    this.invalidateCache();
+  }
+
+  async checkoutCommit(hash: string): Promise<void> {
+    await this.execGit(["checkout", hash]);
+    this.invalidateCache();
+  }
+
+  async resetToCommit(
+    hash: string,
+    mode: "soft" | "mixed" | "hard",
+  ): Promise<void> {
+    await this.execGit(["reset", `--${mode}`, hash]);
+    this.invalidateCache();
+  }
+
+  async revertCommit(hash: string): Promise<void> {
+    await this.execGit(["revert", "--no-edit", hash]);
+    this.invalidateCache();
+  }
+
+  async createBranchFromCommit(
+    branchName: string,
+    hash: string,
+  ): Promise<void> {
+    await this.execGit(["branch", branchName, hash]);
+    this.invalidateCache();
+  }
+
+  async createTag(
+    tagName: string,
+    hash: string,
+    message?: string,
+  ): Promise<void> {
+    if (message) {
+      await this.execGit(["tag", "-a", tagName, hash, "-m", message]);
+    } else {
+      await this.execGit(["tag", tagName, hash]);
+    }
+    this.invalidateCache();
+  }
+
   invalidateCache(pattern?: string): void {
     this.cache.invalidate(pattern);
   }
