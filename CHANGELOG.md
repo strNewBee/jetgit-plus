@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.9] - 2025-05-25
+
+### Added
+- **Show in Git Log** — when viewing file history, right-click a commit to jump back to full log view at that commit
+- **Tab-style file history** — file filter displays as a closeable tab (`History: filename.tsx ×`)
+
+## [0.1.8] - 2025-05-25
+
+### Fixed
+- Changed Files panel now only shows the filtered file when "History Up to Here" is active
+
+## [0.1.7] - 2025-05-25
+
+### Added
+- **History Up to Here** — right-click a file → show only commits that modified it (`git log -- <file>`)
+- File filter indicator in toolbar with clear button
+
+## [0.1.6] - 2025-05-25
+
+### Added
+- SEO keywords for Marketplace discoverability
+- Improved description with more searchable terms
+
 ## [0.1.4] - 2025-05-25
 
 ### Fixed

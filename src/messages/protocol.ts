@@ -60,7 +60,8 @@ export type CommandType =
 export type EventType =
   | "gitStateChanged"
   | "mergeStateChanged"
-  | "themeChanged";
+  | "themeChanged"
+  | "showFileHistory";
 
 export enum ErrorCode {
   GIT_NOT_FOUND = "GIT_NOT_FOUND",

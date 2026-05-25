@@ -3,7 +3,7 @@
   "displayName": "IntelliJ Git Graph - IDEA Style Branch & Merge",
   "publisher": "autemj",
   "description": "IntelliJ IDEA style Git graph visualization with branch context menu, cherry-pick, rebase, merge, reset, and 3-way merge editor. JetBrains-like Git experience for VS Code.",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {
@@ -76,6 +76,12 @@
         "title": "Open in JetGit Merge Editor",
         "icon": "$(git-merge)",
         "category": "JetGit"
+      },
+      {
+        "command": "git-brains.showFileHistory",
+        "title": "Show File History",
+        "icon": "$(history)",
+        "category": "JetGit"
       }
     ],
     "menus": {
@@ -98,6 +104,20 @@
           "command": "git-brains.openMergeEditorFromSCM",
           "when": "scmProvider == git && scmResourceGroup == merge",
           "group": "inline@10"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "git-brains.showFileHistory",
+          "when": "editorTextFocus",
+          "group": "git@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "git-brains.showFileHistory",
+          "when": "!explorerResourceIsFolder",
+          "group": "git@1"
         }
       ]
     }

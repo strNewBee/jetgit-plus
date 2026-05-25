@@ -96,6 +96,18 @@ export function activate(context: vscode.ExtensionContext) {
         mergeManager.openMergeEditor(filePath);
       },
     ),
+    vscode.commands.registerCommand(
+      "git-brains.showFileHistory",
+      (uri?: vscode.Uri) => {
+        const fileUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+        if (!fileUri || !workspaceRoot) return;
+        const relativePath = vscode.workspace.asRelativePath(fileUri, false);
+        // Send file filter to webview
+        messageRouter.broadcastEvent("showFileHistory", {
+          file: relativePath,
+        });
+      },
+    ),
   );
 
   // 6. Register command handlers to MessageRouter

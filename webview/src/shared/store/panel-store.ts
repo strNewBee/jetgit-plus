@@ -592,8 +592,12 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 }));
 
 // Listen for git state changes
-bridge.onEvent((event, _data) => {
+bridge.onEvent((event, data) => {
   if (event === "gitStateChanged") {
     usePanelStore.getState().refresh();
+  }
+  if (event === "showFileHistory") {
+    const { file } = data as { file: string };
+    usePanelStore.getState().setFilter({ file });
   }
 });
