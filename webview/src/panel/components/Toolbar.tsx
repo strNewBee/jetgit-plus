@@ -488,9 +488,24 @@ function FilterDropdown({
         onClose();
       }
     };
+    const handleScroll = (e: Event) => {
+      if (
+        ref.current &&
+        e.target instanceof Node &&
+        !ref.current.contains(e.target)
+      ) {
+        onClose();
+      }
+    };
+    const handleBlur = () => onClose();
     document.addEventListener("mousedown", handleMouseDown, true);
-    return () =>
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("blur", handleBlur);
+    return () => {
       document.removeEventListener("mousedown", handleMouseDown, true);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("blur", handleBlur);
+    };
   }, [onClose]);
 
   return (

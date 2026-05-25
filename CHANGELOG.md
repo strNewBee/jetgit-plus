@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2025-05-25
+
+### Fixed
+- Filter dropdowns (Branch/User/Date) now close when clicking anywhere outside, scrolling, or window blur
+
 ## [0.3.0] - 2025-05-25
 
 ### Changed
