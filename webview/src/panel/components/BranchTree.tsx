@@ -253,7 +253,7 @@ export function BranchTree() {
               : "var(--description-fg)",
           }}
         >
-          Current Branch
+          Current Branch: {headBranch?.name ?? "detached"}
         </div>
       )}
 
