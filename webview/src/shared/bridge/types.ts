@@ -45,7 +45,8 @@ export type CommandType =
   | "openFile"
   | "checkoutBranch"
   | "createBranch"
-  | "deleteBranch";
+  | "deleteBranch"
+  | "renameBranch";
 
 export interface Bridge {
   request(

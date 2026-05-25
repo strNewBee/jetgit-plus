@@ -728,6 +728,20 @@ function BranchContextMenu({
     }
   };
 
+  const handleRename = async () => {
+    onClose();
+    const newName = prompt(`Rename branch '${branch.name}' to:`, branch.name);
+    if (!newName || !newName.trim() || newName.trim() === branch.name) return;
+    try {
+      await bridge.request("renameBranch", {
+        oldName: branch.name,
+        newName: newName.trim(),
+      });
+    } catch (err) {
+      console.error("Rename failed:", err);
+    }
+  };
+
   const items: { label: string; action: () => void; disabled?: boolean; separator?: boolean }[] = [];
 
   if (!isCurrent) {
@@ -740,6 +754,9 @@ function BranchContextMenu({
 
   if (!isCurrent) {
     items.push({ label: "", action: () => {}, separator: true });
+    if (!branch.isRemote) {
+      items.push({ label: "Rename...", action: handleRename });
+    }
     items.push({ label: "Delete", action: handleDelete });
   }
 

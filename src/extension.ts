@@ -340,6 +340,15 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("renameBranch", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const oldName = params.oldName as string;
+    const newName = params.newName as string;
+    await gitService.renameBranch(oldName, newName);
+    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    return { success: true };
+  });
+
   // 7. GitWatcher (only if GitService is available)
   if (gitService && workspaceRoot) {
     const watcher = new GitWatcher(

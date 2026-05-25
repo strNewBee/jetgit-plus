@@ -438,6 +438,11 @@ export class GitService {
     this.invalidateCache();
   }
 
+  async renameBranch(oldName: string, newName: string): Promise<void> {
+    await this.execGit(["branch", "-m", oldName, newName]);
+    this.invalidateCache();
+  }
+
   invalidateCache(pattern?: string): void {
     this.cache.invalidate(pattern);
   }
