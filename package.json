@@ -3,7 +3,7 @@
   "displayName": "IntelliJ Git Graph - IDEA Style Branch & Merge",
   "publisher": "autemj",
   "description": "IntelliJ IDEA style Git graph visualization with branch context menu, cherry-pick, rebase, merge, reset, and 3-way merge editor. JetBrains-like Git experience for VS Code.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {

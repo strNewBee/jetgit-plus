@@ -559,6 +559,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(watcher);
   }
+
+  // 8. Status bar item to quickly open the panel
+  const statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100,
+  );
+  statusBarItem.text = "$(git-branch) IDEA Git";
+  statusBarItem.tooltip = "Open IDEA Git Graph Panel";
+  statusBarItem.command = "git-brains.gitLog.focus";
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
 }
 
 function extToLanguage(ext: string): string {

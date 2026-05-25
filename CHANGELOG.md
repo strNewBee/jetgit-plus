@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.5] - 2025-05-25
+
+### Added
+- Status bar button "IDEA Git" at the bottom to quickly open/focus the Git Graph panel
+
 ## [0.3.4] - 2025-05-25
 
 ### Fixed
