@@ -685,11 +685,14 @@ function BranchContextMenu({
 
   const handleNewBranch = async () => {
     onClose();
-    const newName = prompt(`New branch name (from '${branch.name}'):`);
-    if (!newName || !newName.trim()) return;
+    const result = (await bridge.request("showInputBox", {
+      prompt: `New branch name (from '${branch.name}'):`,
+      placeHolder: "branch-name",
+    })) as { value: string | null };
+    if (!result.value || !result.value.trim()) return;
     try {
       await bridge.request("createBranch", {
-        newBranchName: newName.trim(),
+        newBranchName: result.value.trim(),
         startPoint: branch.name,
       });
     } catch (err) {
@@ -699,8 +702,11 @@ function BranchContextMenu({
 
   const handleDelete = async () => {
     onClose();
-    const confirmed = confirm(`Delete branch '${branch.name}'?`);
-    if (!confirmed) return;
+    const result = (await bridge.request("showConfirmMessage", {
+      message: `Delete branch '${branch.name}'?`,
+      confirmLabel: "Delete",
+    })) as { confirmed: boolean };
+    if (!result.confirmed) return;
     try {
       await bridge.request("deleteBranch", {
         branchName: branch.name,
@@ -709,10 +715,11 @@ function BranchContextMenu({
       });
     } catch (_err) {
       // If normal delete fails (unmerged), ask for force delete
-      const forceConfirmed = confirm(
-        `Branch '${branch.name}' is not fully merged. Force delete?`,
-      );
-      if (forceConfirmed) {
+      const forceResult = (await bridge.request("showConfirmMessage", {
+        message: `Branch '${branch.name}' is not fully merged. Force delete?`,
+        confirmLabel: "Force Delete",
+      })) as { confirmed: boolean };
+      if (forceResult.confirmed) {
         try {
           await bridge.request("deleteBranch", {
             branchName: branch.name,
@@ -728,12 +735,20 @@ function BranchContextMenu({
 
   const handleRename = async () => {
     onClose();
-    const newName = prompt(`Rename branch '${branch.name}' to:`, branch.name);
-    if (!newName || !newName.trim() || newName.trim() === branch.name) return;
+    const result = (await bridge.request("showInputBox", {
+      prompt: `Rename branch '${branch.name}' to:`,
+      value: branch.name,
+    })) as { value: string | null };
+    if (
+      !result.value ||
+      !result.value.trim() ||
+      result.value.trim() === branch.name
+    )
+      return;
     try {
       await bridge.request("renameBranch", {
         oldName: branch.name,
-        newName: newName.trim(),
+        newName: result.value.trim(),
       });
     } catch (err) {
       console.error("Rename failed:", err);
@@ -763,10 +778,11 @@ function BranchContextMenu({
 
   const handleMerge = async () => {
     onClose();
-    const confirmed = confirm(
-      `Merge '${branch.name}' into '${currentBranch}'?`,
-    );
-    if (!confirmed) return;
+    const result = (await bridge.request("showConfirmMessage", {
+      message: `Merge '${branch.name}' into '${currentBranch}'?`,
+      confirmLabel: "Merge",
+    })) as { confirmed: boolean };
+    if (!result.confirmed) return;
     try {
       await bridge.request("mergeBranch", { branchName: branch.name });
     } catch (err) {
@@ -776,10 +792,11 @@ function BranchContextMenu({
 
   const handleRebase = async () => {
     onClose();
-    const confirmed = confirm(
-      `Rebase '${currentBranch}' onto '${branch.name}'?`,
-    );
-    if (!confirmed) return;
+    const result = (await bridge.request("showConfirmMessage", {
+      message: `Rebase '${currentBranch}' onto '${branch.name}'?`,
+      confirmLabel: "Rebase",
+    })) as { confirmed: boolean };
+    if (!result.confirmed) return;
     try {
       await bridge.request("rebaseBranch", { onto: branch.name });
     } catch (err) {

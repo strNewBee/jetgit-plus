@@ -309,6 +309,29 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("showInputBox", async (params) => {
+    const prompt = params.prompt as string | undefined;
+    const value = params.value as string | undefined;
+    const placeHolder = params.placeHolder as string | undefined;
+    const result = await vscode.window.showInputBox({
+      prompt,
+      value,
+      placeHolder,
+    });
+    return { value: result ?? null };
+  });
+
+  messageRouter.handle("showConfirmMessage", async (params) => {
+    const message = params.message as string;
+    const confirmLabel = (params.confirmLabel as string) || "OK";
+    const result = await vscode.window.showWarningMessage(
+      message,
+      { modal: true },
+      confirmLabel,
+    );
+    return { confirmed: result === confirmLabel };
+  });
+
   messageRouter.handle("checkoutBranch", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
