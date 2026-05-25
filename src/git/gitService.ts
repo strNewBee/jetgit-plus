@@ -443,6 +443,11 @@ export class GitService {
     this.invalidateCache();
   }
 
+  async merge(branchName: string): Promise<void> {
+    await this.execGit(["merge", branchName]);
+    this.invalidateCache();
+  }
+
   invalidateCache(pattern?: string): void {
     this.cache.invalidate(pattern);
   }

@@ -742,6 +742,19 @@ function BranchContextMenu({
     }
   };
 
+  const handleMerge = async () => {
+    onClose();
+    const confirmed = confirm(
+      `Merge '${branch.name}' into '${currentBranch}'?`,
+    );
+    if (!confirmed) return;
+    try {
+      await bridge.request("mergeBranch", { branchName: branch.name });
+    } catch (err) {
+      console.error("Merge failed:", err);
+    }
+  };
+
   const items: { label: string; action: () => void; disabled?: boolean; separator?: boolean }[] = [];
 
   if (!isCurrent) {
@@ -751,6 +764,14 @@ function BranchContextMenu({
     label: `New Branch from '${branch.name}'...`,
     action: handleNewBranch,
   });
+
+  if (!isCurrent) {
+    items.push({ label: "", action: () => {}, separator: true });
+    items.push({
+      label: `Merge '${branch.name}' into '${currentBranch}'`,
+      action: handleMerge,
+    });
+  }
 
   if (!isCurrent) {
     items.push({ label: "", action: () => {}, separator: true });

@@ -49,7 +49,8 @@ export type CommandType =
   | "checkoutBranch"
   | "createBranch"
   | "deleteBranch"
-  | "renameBranch";
+  | "renameBranch"
+  | "mergeBranch";
 
 export type EventType =
   | "gitStateChanged"
