@@ -1,33 +1,52 @@
-# Changelog
+# Changelog / 更新日志
 
 ## [0.4.0] - 2026-05-26
 
-### Added
+### Added / 新增
 - **IDEA-style Commit Panel** — new sidebar panel (Activity Bar) replicating IntelliJ's commit workflow
-  - File changes grouped by Changes / Staged / Unversioned Files
-  - Checkbox-based file selection for partial commits
-  - Commit message input with Ctrl+Enter shortcut
-  - Commit / Commit and Push buttons
-  - Amend commit support (auto-loads previous message)
-  - Right-click context menu on files: Show Diff, Jump to Source, Add to VCS/Unstage, Rollback, Shelve Changes
-  - Cmd+Click multi-select for batch operations
-  - Group by Directory toggle with tree view (collapsible folders)
-  - View Options menu (eye icon): Group By Directory, Show Unversioned Files
-  - Expand All / Collapse All toolbar buttons
-- **Shelf (Stash) Tab** — full shelf management
-  - Expandable shelf entries showing individual file changes
-  - Right-click context menu on shelf entries: Unshelve, Restore, Delete
-  - Right-click context menu on shelf files: Show Diff, Unshelve This File, Jump to Source, Copy Path
-  - Single-file shelve support (only stashes the selected file, not all changes)
+  **IDEA 风格 Commit 面板** — 新增侧边栏面板，复刻 IntelliJ 的提交工作流
+  - File changes grouped by Changes / Staged / Unversioned Files / 文件变更按 Changes / Staged / Unversioned Files 分组
+  - Checkbox-based file selection for partial commits / 基于复选框的文件选择，支持部分提交
+  - Commit message input with Ctrl+Enter shortcut / 提交信息输入框，支持 Ctrl+Enter 快捷提交
+  - Commit / Commit and Push buttons / Commit 和 Commit and Push 按钮
+  - Amend commit support (auto-loads previous message) / Amend 提交支持（自动加载上次提交信息）
+  - Right-click context menu: Show Diff, Jump to Source, Add to VCS/Unstage, Rollback, Shelve Changes / 右键菜单：查看差异、跳转源码、暂存/取消暂存、回滚、搁置变更
+  - Cmd+Click multi-select for batch operations / Cmd+点击多选，支持批量操作
+  - Group by Directory toggle with tree view (collapsible folders) / 按目录分组切换，支持树形视图（可折叠文件夹）
+  - View Options menu (eye icon): Group By Directory, Show Unversioned Files / 视图选项菜单（眼睛图标）：按目录分组、显示未跟踪文件
+  - Expand All / Collapse All toolbar buttons / 展开全部/折叠全部工具栏按钮
+- **IDEA-compatible Shelf** — real shelf stored in `.idea/shelf/` (compatible with IntelliJ IDEA)
+  **IDEA 兼容 Shelf** — 真正的 shelf 功能，存储在 `.idea/shelf/`（与 IntelliJ IDEA 完全兼容）
+  - Patch-based storage format matching IDEA's XML + unified diff / 基于 patch 的存储格式，匹配 IDEA 的 XML + unified diff
+  - Expandable shelf entries showing individual file changes / 可展开的 shelf 条目，显示每个文件的变更
+  - Right-click context menu: Unshelve, Restore, Create Patch, Copy as Patch to Clipboard, Import Patches, Delete / 右键菜单：取消搁置、恢复、创建补丁、复制补丁到剪贴板、导入补丁、删除
+  - Show Diff opens side-by-side diff editor (base vs modified) / Show Diff 打开左右对比差异编辑器（原始 vs 修改后）
+  - Import Patches from external .patch/.diff files / 从外部 .patch/.diff 文件导入补丁
+  - Right-click on empty area to Import Patches / 空白区域右键可导入补丁
+- **Stash Tab** — git stash management (renamed from previous "Shelf")
+  **Stash 标签页** — git stash 管理（从之前的 "Shelf" 重命名）
+  - Expandable stash entries with file details / 可展开的 stash 条目，显示文件详情
+  - Right-click context menu: Unshelve, Restore, Delete / 右键菜单：弹出、应用、删除
+  - Per-file context menu: Show Diff, Jump to Source, Copy Path / 单文件右键菜单：查看差异、跳转源码、复制路径
 - All icons sourced from [JetBrains IntelliJ Icons](https://intellij-icons.jetbrains.design/) (Apache 2.0)
+  所有图标来源于 [JetBrains IntelliJ Icons](https://intellij-icons.jetbrains.design/)（Apache 2.0 许可）
 - Unified design language: 6px border-radius, consistent hover colors (#ededed), IDEA blue focus (#3574f0)
+  统一设计语言：6px 圆角、一致的悬浮颜色（#ededed）、IDEA 蓝色聚焦（#3574f0）
 - File status colors matching IDEA: green (added), blue (modified), red (unversioned), gray (deleted)
-- Unknown file types use IDEA-style three-line text icon
+  文件状态颜色匹配 IDEA：绿色（新增）、蓝色（修改）、红色（未跟踪）、灰色（删除）
+- Unknown file types use IDEA-style three-line text icon / 未知文件类型使用 IDEA 风格三横线文本图标
 
-### Changed
-- Global button/input border-radius unified to 6px via `--radius` CSS variable
-- Tab hover/active styles match IDEA (rounded, light blue active state #dfe7f5)
-- Context menu hover color matches existing branch panel (#e8f0fe)
+### Changed / 变更
+- Tab order: Commit | Shelf | Stash (matches IDEA layout) / 标签页顺序：Commit | Shelf | Stash（匹配 IDEA 布局）
+- Global button/input border-radius unified to 6px via `--radius` CSS variable / 全局按钮/输入框圆角统一为 6px
+- Tab hover/active styles match IDEA (rounded, light blue active state #dfe7f5) / 标签页悬浮/选中样式匹配 IDEA（圆角、淡蓝色选中状态）
+- Context menu hover color matches existing branch panel (#e8f0fe) / 右键菜单悬浮颜色与分支面板一致
+- Commit message textarea focus border uses IDEA blue (#3574f0) / 提交信息输入框聚焦边框使用 IDEA 蓝色
+
+### Fixed / 修复
+- Binary files (zip, png) now open correctly via Jump to Source / 二进制文件（zip、png）现在可以通过"跳转源码"正确打开
+- Single-file shelve no longer pulls in unrelated staged files / 单文件搁置不再连带其他已暂存文件
+- Shelf/Stash lists auto-refresh after operations / Shelf/Stash 列表在操作后自动刷新
 
 ## [0.3.5] - 2025-05-25
 
