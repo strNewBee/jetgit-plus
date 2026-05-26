@@ -64,6 +64,7 @@ interface CommitStore {
   setCommitMessage: (msg: string) => void;
   setAmend: (amend: boolean) => void;
   toggleFileSelection: (filePath: string) => void;
+  setFileKeys: (keys: string[], selected: boolean) => void;
   selectAllFiles: () => void;
   deselectAllFiles: () => void;
   highlightFile: (key: string, mode: "single" | "toggle") => void;
@@ -163,6 +164,19 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       next.delete(key);
     } else {
       next.add(key);
+    }
+    set({ selectedFiles: next });
+  },
+
+  setFileKeys(keys: string[], selected: boolean) {
+    const { selectedFiles } = get();
+    const next = new Set(selectedFiles);
+    for (const key of keys) {
+      if (selected) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
     }
     set({ selectedFiles: next });
   },

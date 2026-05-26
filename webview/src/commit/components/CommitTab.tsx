@@ -18,6 +18,7 @@ export function CommitTab() {
     showUnversioned,
     toggleGroup,
     toggleFileSelection,
+    setFileKeys,
     highlightFile,
     showDiff,
     fetchChanges,
@@ -95,6 +96,7 @@ export function CommitTab() {
             selectedFiles={selectedFiles}
             highlightedFiles={highlightedFiles}
             onToggleFile={toggleFileSelection}
+            onSetFileKeys={setFileKeys}
             onHighlightFile={highlightFile}
             onShowDiff={showDiff}
             onContextMenu={handleContextMenu}
@@ -113,6 +115,7 @@ export function CommitTab() {
             selectedFiles={selectedFiles}
             highlightedFiles={highlightedFiles}
             onToggleFile={toggleFileSelection}
+            onSetFileKeys={setFileKeys}
             onHighlightFile={highlightFile}
             onShowDiff={showDiff}
             onContextMenu={handleContextMenu}
@@ -131,6 +134,7 @@ export function CommitTab() {
             selectedFiles={selectedFiles}
             highlightedFiles={highlightedFiles}
             onToggleFile={toggleFileSelection}
+            onSetFileKeys={setFileKeys}
             onHighlightFile={highlightFile}
             onShowDiff={showDiff}
             onContextMenu={handleContextMenu}
@@ -166,6 +170,7 @@ interface FileGroupProps {
   selectedFiles: Set<string>;
   highlightedFiles: Set<string>;
   onToggleFile: (key: string) => void;
+  onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
   onShowDiff: (path: string, staged?: boolean) => Promise<void>;
   onContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
@@ -181,34 +186,80 @@ function FileGroup({
   selectedFiles,
   highlightedFiles,
   onToggleFile,
+  onSetFileKeys,
   onHighlightFile,
   onShowDiff,
   onContextMenu,
 }: FileGroupProps) {
-  const allSelected = files.every((f) =>
-    selectedFiles.has(`${f.path}:${f.staged}`),
+  const allKeys = useMemo(
+    () => files.map((f) => `${f.path}:${f.staged}`),
+    [files],
   );
-  const someSelected = files.some((f) =>
-    selectedFiles.has(`${f.path}:${f.staged}`),
-  );
+  const allSelected = allKeys.every((k) => selectedFiles.has(k));
+  const someSelected = allKeys.some((k) => selectedFiles.has(k));
 
   const handleGroupCheckbox = () => {
     if (allSelected) {
-      for (const f of files) {
-        const key = `${f.path}:${f.staged}`;
-        if (selectedFiles.has(key)) {
-          onToggleFile(key);
-        }
-      }
+      onSetFileKeys(allKeys, false);
     } else {
-      for (const f of files) {
-        const key = `${f.path}:${f.staged}`;
-        if (!selectedFiles.has(key)) {
-          onToggleFile(key);
-        }
-      }
+      onSetFileKeys(allKeys, true);
     }
   };
+
+  // Build flat ordered list of visible file keys for keyboard navigation
+  const { collapsedDirs } = useCommitStore();
+  const visibleKeys = useMemo(() => {
+    if (!expanded) return [];
+    if (!groupByDirectory) {
+      return files.map((f) => `${f.path}:${f.staged}`);
+    }
+    // In directory mode, walk the tree respecting collapsed state
+    const tree = buildDirTree(files);
+    const keys: string[] = [];
+    function walk(node: DirNode) {
+      for (const child of [...node.children].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )) {
+        if (!collapsedDirs.has(child.fullPath)) {
+          walk(child);
+        }
+      }
+      for (const file of node.files) {
+        keys.push(`${file.path}:${file.staged}`);
+      }
+    }
+    walk(tree);
+    return keys;
+  }, [expanded, groupByDirectory, files, collapsedDirs]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+
+      if (visibleKeys.length === 0) return;
+
+      // Find current highlighted index
+      let currentIdx = -1;
+      for (let i = 0; i < visibleKeys.length; i++) {
+        if (highlightedFiles.has(visibleKeys[i])) {
+          currentIdx = i;
+          break;
+        }
+      }
+
+      let nextIdx: number;
+      if (e.key === "ArrowDown") {
+        nextIdx =
+          currentIdx < visibleKeys.length - 1 ? currentIdx + 1 : currentIdx;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : 0;
+      }
+
+      onHighlightFile(visibleKeys[nextIdx], "single");
+    },
+    [visibleKeys, highlightedFiles, onHighlightFile],
+  );
 
   return (
     <div className="commit-group">
@@ -235,13 +286,18 @@ function FileGroup({
         </span>
       </div>
       {expanded && (
-        <div className="commit-group-files">
+        <div
+          className="commit-group-files"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+        >
           {groupByDirectory ? (
             <DirectoryTree
               files={files}
               selectedFiles={selectedFiles}
               highlightedFiles={highlightedFiles}
               onToggleFile={onToggleFile}
+              onSetFileKeys={onSetFileKeys}
               onHighlightFile={onHighlightFile}
               onShowDiff={onShowDiff}
               onContextMenu={onContextMenu}
@@ -323,11 +379,24 @@ function compactDirNode(node: DirNode) {
   }
 }
 
+/** Collect all file keys recursively under a DirNode */
+function collectFileKeys(node: DirNode): string[] {
+  const keys: string[] = [];
+  for (const file of node.files) {
+    keys.push(`${file.path}:${file.staged}`);
+  }
+  for (const child of node.children) {
+    keys.push(...collectFileKeys(child));
+  }
+  return keys;
+}
+
 function DirectoryTree({
   files,
   selectedFiles,
   highlightedFiles,
   onToggleFile,
+  onSetFileKeys,
   onHighlightFile,
   onShowDiff,
   onContextMenu,
@@ -336,6 +405,7 @@ function DirectoryTree({
   selectedFiles: Set<string>;
   highlightedFiles: Set<string>;
   onToggleFile: (key: string) => void;
+  onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
   onShowDiff: (path: string, staged?: boolean) => Promise<void>;
   onContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
@@ -375,6 +445,7 @@ function DirectoryTree({
       selectedFiles={selectedFiles}
       highlightedFiles={highlightedFiles}
       onToggleFile={onToggleFile}
+      onSetFileKeys={onSetFileKeys}
       onHighlightFile={onHighlightFile}
       onShowDiff={onShowDiff}
       onContextMenu={onContextMenu}
@@ -390,6 +461,7 @@ function DirNodeView({
   selectedFiles,
   highlightedFiles,
   onToggleFile,
+  onSetFileKeys,
   onHighlightFile,
   onShowDiff,
   onContextMenu,
@@ -401,6 +473,7 @@ function DirNodeView({
   selectedFiles: Set<string>;
   highlightedFiles: Set<string>;
   onToggleFile: (key: string) => void;
+  onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
   onShowDiff: (path: string, staged?: boolean) => Promise<void>;
   onContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
@@ -412,6 +485,12 @@ function DirNodeView({
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((child) => {
           const isCollapsed = collapsed.has(child.fullPath);
+          const childKeys = collectFileKeys(child);
+          const allChecked =
+            childKeys.length > 0 &&
+            childKeys.every((k) => selectedFiles.has(k));
+          const someChecked = childKeys.some((k) => selectedFiles.has(k));
+
           return (
             <div key={child.fullPath}>
               <div
@@ -419,6 +498,23 @@ function DirNodeView({
                 style={{ paddingLeft: `${12 + depth * 16}px` }}
                 onClick={() => toggleDir(child.fullPath)}
               >
+                <input
+                  type="checkbox"
+                  className="commit-dir-checkbox"
+                  checked={allChecked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someChecked && !allChecked;
+                  }}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    if (allChecked) {
+                      onSetFileKeys(childKeys, false);
+                    } else {
+                      onSetFileKeys(childKeys, true);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
                 <span
                   className={`commit-group-chevron ${isCollapsed ? "collapsed" : ""}`}
                 >
@@ -440,6 +536,7 @@ function DirNodeView({
                   selectedFiles={selectedFiles}
                   highlightedFiles={highlightedFiles}
                   onToggleFile={onToggleFile}
+                  onSetFileKeys={onSetFileKeys}
                   onHighlightFile={onHighlightFile}
                   onShowDiff={onShowDiff}
                   onContextMenu={onContextMenu}
