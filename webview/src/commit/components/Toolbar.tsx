@@ -9,18 +9,22 @@ interface ToolbarProps {
 
 export function Toolbar({ onRefresh, onShelve, hasChanges }: ToolbarProps) {
   const [showViewMenu, setShowViewMenu] = useState(false);
-  const { expandedGroups, toggleGroup } = useCommitStore();
+  const { expandedGroups, toggleGroup, expandAllDirs } = useCommitStore();
 
   const handleExpandAll = useCallback(() => {
+    // Expand file groups
     const groups = ["changes", "staged", "unversioned"];
     for (const g of groups) {
       if (!expandedGroups.has(g)) {
         toggleGroup(g);
       }
     }
-  }, [expandedGroups, toggleGroup]);
+    // Expand all directories in tree view
+    expandAllDirs();
+  }, [expandedGroups, toggleGroup, expandAllDirs]);
 
   const handleCollapseAll = useCallback(() => {
+    // Collapse file groups
     const groups = ["changes", "staged", "unversioned"];
     for (const g of groups) {
       if (expandedGroups.has(g)) {

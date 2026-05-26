@@ -55,6 +55,8 @@ interface CommitStore {
   expandedGroups: Set<string>;
   groupByDirectory: boolean;
   showUnversioned: boolean;
+  /** Collapsed directory paths in tree view */
+  collapsedDirs: Set<string>;
 
   // Actions
   fetchChanges: () => Promise<void>;
@@ -82,6 +84,9 @@ interface CommitStore {
   deleteIdeaShelf: (shelfName: string) => Promise<void>;
   setActiveTab: (tab: TabType) => void;
   toggleGroup: (group: string) => void;
+  toggleDir: (dirPath: string) => void;
+  expandAllDirs: () => void;
+  collapseAllDirs: (allDirPaths: string[]) => void;
   toggleGroupByDirectory: () => void;
   toggleShowUnversioned: () => void;
   refresh: () => Promise<void>;
@@ -100,6 +105,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   expandedGroups: new Set(["changes", "unversioned", "staged"]),
   groupByDirectory: false,
   showUnversioned: true,
+  collapsedDirs: new Set<string>(),
 
   async fetchChanges() {
     try {
@@ -396,8 +402,33 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     set({ expandedGroups: next });
   },
 
+  toggleDir(dirPath: string) {
+    const { collapsedDirs } = get();
+    const next = new Set(collapsedDirs);
+    if (next.has(dirPath)) {
+      next.delete(dirPath);
+    } else {
+      next.add(dirPath);
+    }
+    set({ collapsedDirs: next });
+  },
+
+  expandAllDirs() {
+    set({ collapsedDirs: new Set() });
+  },
+
+  collapseAllDirs(allDirPaths: string[]) {
+    set({ collapsedDirs: new Set(allDirPaths) });
+  },
+
   toggleGroupByDirectory() {
-    set({ groupByDirectory: !get().groupByDirectory });
+    const next = !get().groupByDirectory;
+    // When toggling to directory mode, reset collapsed state so DirectoryTree will collapse all on mount
+    if (next) {
+      set({ groupByDirectory: true, collapsedDirs: new Set() });
+    } else {
+      set({ groupByDirectory: false, collapsedDirs: new Set() });
+    }
   },
 
   toggleShowUnversioned() {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   useCommitStore,
   type WorkingTreeFile,
@@ -340,6 +340,7 @@ function DirectoryTree({
   onShowDiff: (path: string, staged?: boolean) => Promise<void>;
   onContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
 }) {
+  const { collapsedDirs, toggleDir, collapseAllDirs } = useCommitStore();
   const tree = useMemo(() => buildDirTree(files), [files]);
 
   // Collect all directory paths
@@ -355,28 +356,21 @@ function DirectoryTree({
     return paths;
   }, [tree]);
 
-  // Default: all directories collapsed
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(allDirPaths),
-  );
-
-  const toggleDir = useCallback((path: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }, []);
+  // On first mount when groupByDirectory is toggled on, collapse all
+  const initializedRef = useRef(false);
+  if (!initializedRef.current && allDirPaths.length > 0) {
+    initializedRef.current = true;
+    // Only collapse all if collapsedDirs is empty (fresh toggle)
+    if (collapsedDirs.size === 0) {
+      collapseAllDirs(allDirPaths);
+    }
+  }
 
   return (
     <DirNodeView
       node={tree}
       depth={0}
-      collapsed={collapsed}
+      collapsed={collapsedDirs}
       toggleDir={toggleDir}
       selectedFiles={selectedFiles}
       highlightedFiles={highlightedFiles}
