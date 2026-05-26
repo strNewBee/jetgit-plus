@@ -180,14 +180,14 @@
     "keybindings": [
       {
         "command": "git-brains.nextDiff",
-        "key": "alt+shift+right",
-        "mac": "alt+shift+right",
+        "key": "f7",
+        "mac": "f7",
         "when": "isInDiffEditor"
       },
       {
         "command": "git-brains.prevDiff",
-        "key": "alt+shift+left",
-        "mac": "alt+shift+left",
+        "key": "shift+f7",
+        "mac": "shift+f7",
         "when": "isInDiffEditor"
       }
     ]
