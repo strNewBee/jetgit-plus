@@ -1,5 +1,12 @@
 # Changelog / 更新日志
 
+## [0.4.2] - 2026-05-27
+
+### Added / 新增
+- Clicking Commit icon in Activity Bar now opens both sidebar and bottom Git Log panel simultaneously / 点击 Activity Bar 的 Commit 图标同时打开侧边栏和底部 Git Log 面板
+- Clicking again to collapse also closes the bottom panel / 再次点击收起时同时关闭底部面板
+- Custom larger SVG icon for Commit in Activity Bar / Activity Bar 使用更大的自定义 SVG 图标
+
 ## [0.4.1] - 2026-05-26
 
 ### Added / 新增
