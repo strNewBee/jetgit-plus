@@ -1,13 +1,6 @@
 import { usePanelStore } from "../../shared/store/panel-store";
 import type { Commit } from "../../shared/types/git";
 
-const REF_COLORS: Record<string, { bg: string; fg: string }> = {
-  branch: { bg: "#deefe3", fg: "#24663a" },
-  "remote-branch": { bg: "#eee7ff", fg: "#5f4aa1" },
-  tag: { bg: "#fff1d9", fg: "#7c5a08" },
-  HEAD: { bg: "#e2eeff", fg: "#1f4f86" },
-};
-
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
   if (Number.isNaN(date.getTime())) return dateStr;
@@ -20,16 +13,17 @@ function formatDateTime(dateStr: string): string {
 }
 
 function CommitInfo({ commit }: { commit: Commit }) {
-  const branchRef = commit.refs.find((r) => r.type === "branch");
-  const hasHead = commit.refs.some((r) => r.type === "HEAD");
-  const displayRefs = commit.refs
-    .filter((r) => !(hasHead && r.type === "branch"))
-    .filter((r) => !(r.type === "remote-branch" && r.name.endsWith("/HEAD")))
-    .map((r) =>
-      r.type === "HEAD" && branchRef
-        ? { ...r, name: `HEAD → ${branchRef.name}` }
-        : r,
-    );
+  const displayRefs = commit.refs.filter(
+    (r) => !(r.type === "remote-branch" && r.name.endsWith("/HEAD")),
+  );
+
+  /** Icon colors matching IDEA */
+  const iconColors: Record<string, string> = {
+    branch: "#59a869",
+    "remote-branch": "#9b7dd4",
+    tag: "#c4a000",
+    HEAD: "#e06c75",
+  };
 
   return (
     <div>
@@ -76,29 +70,41 @@ function CommitInfo({ commit }: { commit: Commit }) {
         {commit.authorName} on {formatDateTime(commit.authorDate)}
       </div>
 
-      {/* Ref badges */}
+      {/* Ref icons + text */}
       {displayRefs.length > 0 && (
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
           {displayRefs.map((r, i) => {
-            const colors = REF_COLORS[r.type] ?? REF_COLORS.branch;
+            const color = iconColors[r.type] ?? iconColors.branch;
+            const label = r.type === "HEAD" ? "HEAD" : r.name;
             return (
               <span
                 key={`${r.type}:${r.name}:${i}`}
                 style={{
-                  display: "inline-block",
-                  padding: "0 6px",
-                  borderRadius: 3,
-                  fontSize: "0.8em",
-                  fontWeight: 500,
-                  lineHeight: "18px",
-                  background: colors.bg,
-                  color: colors.fg,
-                  border: "1px solid #00000022",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  fontSize: "0.85em",
                   whiteSpace: "nowrap",
                 }}
                 title={r.name}
               >
-                {r.name}
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M2.5 3.5C2.5 2.95 2.95 2.5 3.5 2.5H7.09c.27 0 .52.1.71.3l5.41 5.41c.39.39.39 1.02 0 1.41l-3.59 3.59c-.39.39-1.02.39-1.41 0L2.79 7.8a1 1 0 01-.29-.71V3.5z"
+                    fill="var(--app-bg, #fff)"
+                    stroke={color}
+                    strokeWidth="1.2"
+                  />
+                  <circle cx="5" cy="5" r="0.9" fill={color} />
+                </svg>
+                <span>{label}</span>
               </span>
             );
           })}
