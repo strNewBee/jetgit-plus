@@ -4,11 +4,12 @@ import type { Commit, LaneInfo, RefInfo } from "../../shared/types/git";
 
 export const ROW_HEIGHT = 28;
 
-const REF_COLORS: Record<string, { bg: string; fg: string }> = {
-  branch: { bg: "#deefe3", fg: "#24663a" },
-  "remote-branch": { bg: "#eee7ff", fg: "#5f4aa1" },
-  tag: { bg: "#fff1d9", fg: "#7c5a08" },
-  HEAD: { bg: "#e2eeff", fg: "#1f4f86" },
+/** Tag icon colors matching IDEA */
+const REF_ICON_COLORS: Record<string, string> = {
+  branch: "#59a869",
+  "remote-branch": "#9b7dd4",
+  tag: "#c4a000",
+  HEAD: "#e06c75",
 };
 
 function formatDateTime(dateStr: string): string {
@@ -194,34 +195,48 @@ export function CommitRow({
           {commit.subject}
         </span>
         {refItems.length > 0 && (
-          <span style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}>
-            {refItems.map((item) => {
-              const colors = REF_COLORS[item.type] ?? REF_COLORS.branch;
-              return (
-                <span
-                  key={item.key}
-                  style={{
-                    padding: "0 5px",
-                    borderRadius: 3,
-                    display: "inline-block",
-                    fontSize: "0.75em",
-                    fontWeight: 500,
-                    lineHeight: "16px",
-                    background: colors.bg,
-                    color: colors.fg,
-                    border: "1px solid #00000015",
-                    whiteSpace: "nowrap",
-                    verticalAlign: "middle",
-                    maxWidth: 180,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                  title={item.label}
-                >
-                  {item.label}
-                </span>
-              );
-            })}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              flexShrink: 0,
+            }}
+          >
+            {/* Overlapping tag icons */}
+            <span style={{ display: "inline-flex", marginLeft: -2 }}>
+              {refItems.map((item, idx) => {
+                const color =
+                  REF_ICON_COLORS[item.type] ?? REF_ICON_COLORS.branch;
+                return (
+                  <svg
+                    key={item.key}
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    style={{ marginLeft: idx > 0 ? -4 : 0 }}
+                  >
+                    <path
+                      d="M2 3.5C2 2.67 2.67 2 3.5 2H7.09c.4 0 .78.16 1.06.44l5.41 5.41a1.5 1.5 0 010 2.12l-3.59 3.59a1.5 1.5 0 01-2.12 0L2.44 8.15A1.5 1.5 0 012 7.09V3.5z"
+                      fill={color}
+                      stroke={color}
+                      strokeWidth="0.5"
+                    />
+                    <circle cx="5" cy="5" r="1" fill="white" />
+                  </svg>
+                );
+              })}
+            </span>
+            {/* Text labels (skip HEAD text) */}
+            <span
+              style={{ fontSize: "0.8em", whiteSpace: "nowrap", opacity: 0.85 }}
+            >
+              {refItems
+                .filter((item) => item.type !== "HEAD")
+                .map((item) => item.label)
+                .join("  ")}
+            </span>
           </span>
         )}
       </span>
