@@ -391,12 +391,12 @@
 }
 
 .commit-btn-secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  background: #ededed !important;
+  color: var(--vscode-foreground);
 }
 
-.commit-btn-secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+.commit-btn-secondary:hover:not(:disabled) {
+  background: #d4d4d4 !important;
 }
 
 .commit-btn-secondary:disabled {
