@@ -665,12 +665,34 @@ function DirContextMenu({
     onClose();
   }, [files, onClose]);
 
+  const handleOpenInSystemFolder = useCallback(() => {
+    // Use the first file's directory path
+    const firstFile = files[0];
+    if (firstFile) {
+      import("../../shared/bridge").then(({ bridge }) => {
+        bridge.request("revealInSystemExplorer", { filePath: firstFile.path });
+      });
+    }
+    onClose();
+  }, [files, onClose]);
+
   return (
     <div
       className="commit-context-menu"
       ref={menuRef}
       style={{ position: "fixed", left: x, top: y, zIndex: 1000 }}
     >
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleOpenInSystemFolder}
+      >
+        <FolderOpenIcon />
+        <span>Open in System Folder</span>
+      </button>
+
+      <div className="commit-context-menu-separator" />
+
       <button
         type="button"
         className="commit-context-menu-item"
@@ -681,6 +703,25 @@ function DirContextMenu({
         <span className="commit-context-menu-shortcut">⌫</span>
       </button>
     </div>
+  );
+}
+
+function FolderOpenIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      className="commit-context-menu-icon"
+    >
+      <path
+        d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5L7 4H13.5C14.05 4 14.5 4.45 14.5 5V12.5C14.5 13.05 14.05 13.5 13.5 13.5H2.5C1.95 13.5 1.5 13.05 1.5 12.5V3.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

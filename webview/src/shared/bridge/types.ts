@@ -75,7 +75,8 @@ export type CommandType =
   | "createPatchFromShelf"
   | "copyShelfPatchToClipboard"
   | "importPatches"
-  | "deleteFiles";
+  | "deleteFiles"
+  | "revealInSystemExplorer";
 
 export interface Bridge {
   request(

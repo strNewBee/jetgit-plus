@@ -729,6 +729,17 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("revealInSystemExplorer", async (params) => {
+    const filePath = params.filePath as string;
+    if (!filePath || !workspaceRoot) return { success: false };
+    const absPath = vscode.Uri.joinPath(
+      vscode.Uri.file(workspaceRoot),
+      filePath,
+    );
+    await vscode.commands.executeCommand("revealFileInOS", absPath);
+    return { success: true };
+  });
+
   messageRouter.handle("deleteFiles", async (params) => {
     if (!workspaceRoot) return NOT_GIT_REPO;
     const filePaths = params.filePaths as string[];

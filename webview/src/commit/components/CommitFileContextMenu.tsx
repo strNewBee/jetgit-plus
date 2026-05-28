@@ -106,9 +106,15 @@ export function CommitFileContextMenu({
   }, [file, highlightedFiles, changes, onClose]);
 
   const handleJumpToSource = useCallback(() => {
-    // Open the file in editor
     import("../../shared/bridge").then(({ bridge }) => {
       bridge.request("openFile", { filePath: file.path });
+    });
+    onClose();
+  }, [file, onClose]);
+
+  const handleOpenInSystemFolder = useCallback(() => {
+    import("../../shared/bridge").then(({ bridge }) => {
+      bridge.request("revealInSystemExplorer", { filePath: file.path });
     });
     onClose();
   }, [file, onClose]);
@@ -134,6 +140,16 @@ export function CommitFileContextMenu({
       >
         <JumpIcon />
         <span>Jump to Source</span>
+      </button>
+
+      {/* Open in System Folder */}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleOpenInSystemFolder}
+      >
+        <FolderOpenIcon />
+        <span>Open in System Folder</span>
       </button>
 
       <div className="commit-context-menu-separator" />
@@ -339,6 +355,25 @@ function DeleteIcon() {
         clipRule="evenodd"
         d="M7 2H9C9.55228 2 10 2.44772 10 3H6C6 2.44772 6.44772 2 7 2ZM5 3C5 1.89543 5.89543 1 7 1H9C10.1046 1 11 1.89543 11 3H13C13.5523 3 14 3.44772 14 4V5V6H13V13C13 14.1046 12.1046 15 11 15H5C3.89543 15 3 14.1046 3 13V6H2V5V4C2 3.44772 2.44772 3 3 3H5ZM11 4H10H6H5H3V5H4H12H13V4H11ZM4 6H12V13C12 13.5523 11.5523 14 11 14H5C4.44772 14 4 13.5523 4 13V6ZM6.5 7C6.22386 7 6 7.22386 6 7.5V11.5C6 11.7761 6.22386 12 6.5 12C6.77614 12 7 11.7761 7 11.5V7.5C7 7.22386 6.77614 7 6.5 7ZM9 7.5C9 7.22386 9.22386 7 9.5 7C9.77614 7 10 7.22386 10 7.5V11.5C10 11.7761 9.77614 12 9.5 12C9.22386 12 9 11.7761 9 11.5V7.5Z"
         fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function FolderOpenIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      className="commit-context-menu-icon"
+    >
+      <path
+        d="M1.5 3.5C1.5 2.95 1.95 2.5 2.5 2.5H5.5L7 4H13.5C14.05 4 14.5 4.45 14.5 5V12.5C14.5 13.05 14.05 13.5 13.5 13.5H2.5C1.95 13.5 1.5 13.05 1.5 12.5V3.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
