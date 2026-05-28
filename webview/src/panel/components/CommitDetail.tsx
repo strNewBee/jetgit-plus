@@ -94,12 +94,16 @@ function CommitInfo({ commit }: { commit: Commit }) {
           {commit.shortHash}
         </span>{" "}
         {commit.authorName}{" "}
-        <a
-          href={`mailto:${commit.authorEmail}`}
-          style={{ color: "#3574f0", textDecoration: "none" }}
-        >
-          &lt;{commit.authorEmail}&gt;
-        </a>{" "}
+        {commit.authorEmail && (
+          <>
+            <a
+              href={`mailto:${commit.authorEmail}`}
+              style={{ color: "#3574f0", textDecoration: "none" }}
+            >
+              &lt;{commit.authorEmail}&gt;
+            </a>{" "}
+          </>
+        )}
         on {formatDateTime(commit.authorDate)}
       </div>
 
