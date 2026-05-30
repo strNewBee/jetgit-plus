@@ -1,5 +1,16 @@
 # Changelog / 更新日志
 
+## [0.4.6] - 2026-05-30
+
+### Added / 新增
+- **Current branch sorted to top** — the checked-out branch (or folder containing it) is always shown first in the Local branch tree / 当前分支（或包含它的文件夹）始终排在 Local 分支树最顶部
+- **Commit message history dropdown** — click the clock icon next to "Amend" to pick from recent commit messages / 点击 Amend 旁的时钟图标可选择最近的 commit message
+- **Refresh syncs both panels** — the refresh button in the commit panel now also refreshes the git log view / Commit 面板的刷新按钮现在同时刷新 Git Log 视图
+
+### Fixed / 修复
+- History dropdown opens upward to avoid being clipped by panel boundary / 历史下拉菜单向上弹出，避免被面板边界裁剪
+- History dropdown dismisses on outside click / 点击外部区域关闭历史下拉菜单
+
 ## [0.4.4] - 2026-05-28
 
 ### Added / 新增
