@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useCommitStore } from "../../shared/store/commit-store";
+import { bridge } from "../../shared/bridge";
 
 export function CommitMessageArea() {
   const {
@@ -14,7 +16,11 @@ export function CommitMessageArea() {
   } = useCommitStore();
 
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [recentMessages, setRecentMessages] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const historyBtnRef = useRef<HTMLSpanElement>(null);
+  const historyDropdownRef = useRef<HTMLDivElement>(null);
 
   const hasSelectedFiles = selectedFiles.size > 0;
   const canCommit =
@@ -42,6 +48,50 @@ export function CommitMessageArea() {
     [handleCommit],
   );
 
+  const handleHistoryClick = useCallback(async () => {
+    if (showHistory) {
+      setShowHistory(false);
+      return;
+    }
+    try {
+      const messages = (await bridge.request(
+        "getRecentCommitMessages",
+      )) as string[];
+      setRecentMessages(messages ?? []);
+    } catch {
+      setRecentMessages([]);
+    }
+    setShowHistory(true);
+  }, [showHistory]);
+
+  const handleSelectMessage = useCallback(
+    (msg: string) => {
+      setCommitMessage(msg);
+      setShowHistory(false);
+    },
+    [setCommitMessage],
+  );
+
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      // Check if click is inside the dropdown or the button
+      if (historyBtnRef.current?.contains(target)) return;
+      if (historyDropdownRef.current?.contains(target)) return;
+      setShowHistory(false);
+    };
+    // Use setTimeout to avoid the current click event triggering close immediately
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside, true);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", handleClickOutside, true);
+    };
+  }, [showHistory]);
+
   return (
     <div className="commit-message-area">
       <textarea
@@ -62,7 +112,53 @@ export function CommitMessageArea() {
           />
           Amend
         </label>
-        <HistoryIcon />
+        <span
+          ref={historyBtnRef}
+          onClick={handleHistoryClick}
+          style={{
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            borderRadius: 3,
+            padding: 2,
+            transition: "background 0.15s, opacity 0.15s",
+            opacity: showHistory ? 1 : 0.6,
+            background: showHistory
+              ? "var(--vscode-toolbar-activeBackground, rgba(0,0,0,0.1))"
+              : "transparent",
+          }}
+          onMouseEnter={(e) => {
+            if (!showHistory)
+              (e.currentTarget as HTMLElement).style.opacity = "1";
+          }}
+          onMouseLeave={(e) => {
+            if (!showHistory)
+              (e.currentTarget as HTMLElement).style.opacity = "0.6";
+          }}
+          onMouseDown={(e) => {
+            (e.currentTarget as HTMLElement).style.background =
+              "var(--vscode-toolbar-activeBackground, rgba(0,0,0,0.15))";
+          }}
+          onMouseUp={(e) => {
+            (e.currentTarget as HTMLElement).style.background = showHistory
+              ? "var(--vscode-toolbar-activeBackground, rgba(0,0,0,0.1))"
+              : "transparent";
+          }}
+          title="Recent commit messages"
+        >
+          <HistoryIcon />
+        </span>
+        {showHistory &&
+          createPortal(
+            <HistoryDropdown
+              ref={historyDropdownRef}
+              anchorRef={historyBtnRef}
+              messages={recentMessages}
+              onSelect={handleSelectMessage}
+              onClose={() => setShowHistory(false)}
+            />,
+            document.body,
+          )}
       </div>
 
       <div className="commit-buttons">
@@ -110,6 +206,113 @@ export function CommitMessageArea() {
     </div>
   );
 }
+
+interface HistoryDropdownProps {
+  anchorRef: React.RefObject<HTMLSpanElement | null>;
+  messages: string[];
+  onSelect: (msg: string) => void;
+  onClose: () => void;
+}
+
+const HistoryDropdown = React.forwardRef<HTMLDivElement, HistoryDropdownProps>(
+  ({ anchorRef, messages, onSelect, onClose }, ref) => {
+    const innerRef = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState<{ bottom: number; left: number } | null>(
+      null,
+    );
+
+    // Combine forwarded ref and inner ref
+    const setRefs = useCallback(
+      (node: HTMLDivElement | null) => {
+        (innerRef as React.MutableRefObject<HTMLDivElement | null>).current =
+          node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      },
+      [ref],
+    );
+
+    useEffect(() => {
+      if (anchorRef.current) {
+        const rect = anchorRef.current.getBoundingClientRect();
+        // Position above the button, align right edge to viewport
+        const bottom = window.innerHeight - rect.top + 4;
+        const left = Math.min(rect.left, window.innerWidth - 8);
+        setPos({ bottom, left });
+      }
+    }, [anchorRef]);
+
+    useEffect(() => {
+      const handleKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") onClose();
+      };
+      document.addEventListener("keydown", handleKey);
+      return () => document.removeEventListener("keydown", handleKey);
+    }, [onClose]);
+
+    if (!pos) return null;
+
+    return (
+      <div
+        ref={setRefs}
+        style={{
+          position: "fixed",
+          bottom: pos.bottom,
+          left: 4,
+          right: 4,
+          zIndex: 99999,
+          background: "var(--vscode-menu-background, #fff)",
+          border: "1px solid var(--vscode-menu-border, #e0e0e0)",
+          borderRadius: 4,
+          padding: "4px 0",
+          maxHeight: 250,
+          overflowY: "auto",
+          boxShadow:
+            "0 -3px 12px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.06)",
+        }}
+      >
+        {messages.length === 0 ? (
+          <div
+            style={{
+              padding: "8px 12px",
+              opacity: 0.5,
+              fontSize: 12,
+            }}
+          >
+            No recent commit messages
+          </div>
+        ) : (
+          messages.map((msg, i) => (
+            <div
+              key={`${i}-${msg}`}
+              onClick={() => onSelect(msg)}
+              style={{
+                padding: "6px 12px",
+                cursor: "pointer",
+                fontSize: 12,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: "var(--vscode-menu-foreground, #333)",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background =
+                  "var(--vscode-menu-selectionBackground, #e8f0fe)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background =
+                  "transparent";
+              }}
+              title={msg}
+            >
+              {msg}
+            </div>
+          ))
+        )}
+      </div>
+    );
+  },
+);
 
 function HistoryIcon() {
   return (

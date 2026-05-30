@@ -76,7 +76,8 @@ export type CommandType =
   | "copyShelfPatchToClipboard"
   | "importPatches"
   | "deleteFiles"
-  | "revealInSystemExplorer";
+  | "revealInSystemExplorer"
+  | "getRecentCommitMessages";
 
 export interface Bridge {
   request(

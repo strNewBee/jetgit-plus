@@ -180,8 +180,25 @@ function buildTree(
   return roots;
 }
 
+function containsCurrentBranch(node: TreeNode): boolean {
+  if (node.isLeaf) {
+    return !!node.branch?.isCurrent;
+  }
+  return node.children.some(containsCurrentBranch);
+}
+
 function sortTreeNodes(nodes: TreeNode[]): void {
   nodes.sort((a, b) => {
+    // Current branch (or folder containing it) always comes first.
+    const aCurrent = a.isLeaf
+      ? !!a.branch?.isCurrent
+      : containsCurrentBranch(a);
+    const bCurrent = b.isLeaf
+      ? !!b.branch?.isCurrent
+      : containsCurrentBranch(b);
+    if (aCurrent !== bCurrent) {
+      return aCurrent ? -1 : 1;
+    }
     // Folders first, leaves after.
     if (a.isLeaf !== b.isLeaf) {
       return a.isLeaf ? 1 : -1;
@@ -301,7 +318,18 @@ export function BranchTree() {
   const headBranch = localBranches.find((b) => b.isCurrent);
   const headCommit = commits.find((c) => c.refs.some((r) => r.type === "HEAD"));
 
-  const localTree = branchesToTree(localBranches);
+  const localTreeRaw = branchesToTree(localBranches);
+  // Move the current branch (or folder containing it) to the top
+  const localTree = (() => {
+    const idx = localTreeRaw.findIndex((node) =>
+      node.isLeaf ? node.branch?.isCurrent : containsCurrentBranch(node),
+    );
+    if (idx > 0) {
+      const [current] = localTreeRaw.splice(idx, 1);
+      localTreeRaw.unshift(current);
+    }
+    return localTreeRaw;
+  })();
   const remoteTree = branchesToTree(remoteBranches);
   const filteredTags = tags.filter(
     (t) =>

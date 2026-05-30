@@ -659,6 +659,22 @@ export class GitService {
     }
   }
 
+  async getRecentCommitMessages(count = 20): Promise<string[]> {
+    try {
+      const output = await this.execGit([
+        "log",
+        `-${count}`,
+        "--format=%s",
+      ]);
+      return output
+        .trim()
+        .split("\n")
+        .filter((msg) => msg.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
   async rollbackFile(filePath: string): Promise<void> {
     // Check if file is untracked
     try {

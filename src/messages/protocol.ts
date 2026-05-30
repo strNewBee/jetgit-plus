@@ -79,7 +79,8 @@ export type CommandType =
   | "copyShelfPatchToClipboard"
   | "importPatches"
   | "deleteFiles"
-  | "revealInSystemExplorer";
+  | "revealInSystemExplorer"
+  | "getRecentCommitMessages";
 
 export type EventType =
   | "gitStateChanged"

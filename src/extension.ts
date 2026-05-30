@@ -715,6 +715,11 @@ export function activate(context: vscode.ExtensionContext) {
     return { message };
   });
 
+  messageRouter.handle("getRecentCommitMessages", async () => {
+    if (!gitService) return NOT_GIT_REPO;
+    return gitService.getRecentCommitMessages(20);
+  });
+
   messageRouter.handle("rollbackFile", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
