@@ -161,8 +161,13 @@ export function CommitList({
       const nextHash = visibleCommits[nextIdx].hash;
       void selectCommit(nextHash, "single", allVisibleCommitHashes);
 
-      // Scroll the selected row into view
-      virtualizer.scrollToIndex(nextIdx, { align: "auto" });
+      // Scroll the selected row into view with some padding
+      // Show 3 rows ahead so user can see upcoming items
+      const scrollIdx =
+        e.key === "ArrowDown"
+          ? Math.min(nextIdx + 3, visibleCommits.length - 1)
+          : Math.max(nextIdx - 3, 0);
+      virtualizer.scrollToIndex(scrollIdx, { align: "auto" });
     };
 
     document.addEventListener("keydown", handleKeyDown);
