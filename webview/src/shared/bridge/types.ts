@@ -60,6 +60,7 @@ export type CommandType =
   | "commitAndPush"
   | "amendCommit"
   | "rollbackFile"
+  | "rollbackFiles"
   | "getWorkingTreeChanges"
   | "getShelves"
   | "shelveChanges"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkingTreeFile } from "../../shared/store/commit-store";
 import { useCommitStore } from "../../shared/store/commit-store";
 
@@ -26,7 +26,7 @@ export function CommitFileContextMenu({
     changes,
   } = useCommitStore();
 
-  // Close on outside click or Escape
+  // Close on outside click, Escape, blur, or scroll
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -36,19 +36,60 @@ export function CommitFileContextMenu({
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("mousedown", handleClick);
+    const handleBlur = () => onClose();
+    const handleScroll = (e: Event) => {
+      if (
+        menuRef.current &&
+        e.target instanceof Node &&
+        !menuRef.current.contains(e.target)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClick, true);
     document.addEventListener("keydown", handleKey);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleBlur);
     return () => {
-      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("mousedown", handleClick, true);
       document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleBlur);
     };
   }, [onClose]);
 
   // Position adjustment to keep menu in viewport
+  const [position, setPosition] = useState<{
+    top: number;
+    left: number;
+  }>({ top: y, left: x });
+
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    requestAnimationFrame(() => {
+      const rect = menu.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const viewportW = window.innerWidth;
+      let top = y;
+      let left = x;
+      if (top + rect.height > viewportH) {
+        const above = y - rect.height;
+        top = above >= 4 ? above : Math.max(4, viewportH - rect.height - 4);
+      }
+      if (left + rect.width > viewportW) {
+        left = Math.max(4, viewportW - rect.width - 4);
+      }
+      setPosition({ top, left });
+    });
+  }, [x, y]);
+
   const style: React.CSSProperties = {
     position: "fixed",
-    left: x,
-    top: y,
+    left: position.left,
+    top: position.top,
     zIndex: 1000,
   };
 

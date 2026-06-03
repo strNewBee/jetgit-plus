@@ -778,6 +778,23 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("rollbackFiles", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const filePaths = params.filePaths as string[];
+    if (!filePaths || filePaths.length === 0) return { success: false };
+    const choice = await vscode.window.showWarningMessage(
+      `Rollback changes to ${filePaths.length} file(s)? This cannot be undone.`,
+      { modal: true },
+      "Rollback",
+    );
+    if (choice !== "Rollback") return { success: false };
+    for (const filePath of filePaths) {
+      await gitService.rollbackFile(filePath);
+    }
+    messageRouter.broadcastEvent("commitStateChanged", {});
+    return { success: true };
+  });
+
   messageRouter.handle("revealInSystemExplorer", async (params) => {
     const filePath = params.filePath as string;
     if (!filePath || !workspaceRoot) return { success: false };
