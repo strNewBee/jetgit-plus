@@ -17,7 +17,7 @@ export function Tooltip({
   text,
   children,
   delay = 300,
-  position = "bottom",
+  position = "top",
 }: TooltipProps) {
   const [visible, setVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(
