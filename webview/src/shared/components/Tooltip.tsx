@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 interface TooltipProps {
   text: string;
@@ -99,23 +100,27 @@ export function Tooltip({
       onMouseLeave={hide}
     >
       {children}
-      {visible && coords && (
-        <div
-          ref={tooltipRef}
-          className="tooltip-popup"
-          style={{
-            position: "fixed",
-            top: coords.top,
-            left: coords.left,
-            transform:
-              position === "top"
-                ? "translate(-50%, -100%)"
-                : "translateX(-50%)",
-          }}
-        >
-          {text}
-        </div>
-      )}
+      {visible &&
+        coords &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            className="tooltip-popup"
+            style={{
+              position: "fixed",
+              top: coords.top,
+              left: coords.left,
+              transform:
+                position === "top"
+                  ? "translate(-50%, -100%)"
+                  : "translateX(-50%)",
+              zIndex: 99999,
+            }}
+          >
+            {text}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
