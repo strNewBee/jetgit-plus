@@ -92,9 +92,9 @@ export function PanelApp() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Allotment proportionalLayout={false}>
             <Allotment.Pane
-              preferredSize={showLeft ? 200 : 28}
+              preferredSize={showLeft ? 330 : 28}
               minSize={showLeft ? 140 : 28}
-              maxSize={showLeft ? 400 : 28}
+              maxSize={showLeft ? 500 : 28}
               visible
             >
               {showLeft ? (
