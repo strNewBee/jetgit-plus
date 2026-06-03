@@ -1,3 +1,4 @@
+import { Tooltip } from "../../shared/components/Tooltip";
 import { usePreventSelect } from "../../shared/hooks/usePreventSelect";
 import { usePanelStore } from "../../shared/store/panel-store";
 import type { Commit, LaneInfo, RefInfo } from "../../shared/types/git";
@@ -195,17 +196,19 @@ export function CommitRow({
           gap: 6,
         }}
       >
-        <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flexShrink: 1,
-            minWidth: 0,
-          }}
-        >
-          {commit.subject}
-        </span>
+        <Tooltip text={commit.subject}>
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flexShrink: 1,
+              minWidth: 0,
+            }}
+          >
+            {commit.subject}
+          </span>
+        </Tooltip>
         {refItems.length > 0 && (
           <>
             <span style={{ flex: 1 }} />
