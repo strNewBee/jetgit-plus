@@ -89,47 +89,55 @@ export function PanelApp() {
     >
       <ProgressBar visible={operationInProgress || loading} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Allotment proportionalLayout={false} key={`l-${showLeft}`}>
-            <Allotment.Pane
-              preferredSize={330}
-              minSize={showLeft ? 140 : 28}
-              maxSize={showLeft ? 500 : 28}
-              visible
+        {/* Left branch panel — outside Allotment to avoid flicker */}
+        <div
+          style={{
+            width: showLeft ? 330 : 28,
+            minWidth: showLeft ? 140 : 28,
+            maxWidth: showLeft ? 500 : 28,
+            height: "100%",
+            flexShrink: 0,
+            overflow: "hidden",
+            resize: showLeft ? "horizontal" : "none",
+            borderRight: "1px solid var(--border)",
+          }}
+        >
+          {showLeft ? (
+            <div
+              style={{
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+              }}
             >
-              {showLeft ? (
-                <div
-                  style={{
-                    height: "100%",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
+              <BranchTree onTogglePanel={toggleLeft} />
+            </div>
+          ) : (
+            <div
+              style={{
+                height: "100%",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "center",
+                paddingTop: 4,
+              }}
+            >
+              <Tooltip text="Show Branches">
+                <button
+                  type="button"
+                  className="panel-toggle-btn"
+                  onClick={toggleLeft}
                 >
-                  <BranchTree onTogglePanel={toggleLeft} />
-                </div>
-              ) : (
-                <div
-                  style={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    justifyContent: "center",
-                    paddingTop: 4,
-                    borderRight: "1px solid var(--border)",
-                  }}
-                >
-                  <Tooltip text="Show Branches">
-                    <button
-                      type="button"
-                      className="panel-toggle-btn"
-                      onClick={toggleLeft}
-                    >
-                      <ChevronRightIcon />
-                    </button>
-                  </Tooltip>
-                </div>
-              )}
-            </Allotment.Pane>
+                  <ChevronRightIcon />
+                </button>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+
+        {/* Middle + Right in Allotment */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Allotment proportionalLayout={false}>
             <Allotment.Pane minSize={400}>
               <div
                 ref={middleRef}
