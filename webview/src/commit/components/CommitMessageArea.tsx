@@ -12,7 +12,6 @@ export function CommitMessageArea() {
     amend,
     setAmend,
     commit,
-    commitAndPush,
     loading,
     selectedFiles,
   } = useCommitStore();
@@ -36,8 +35,9 @@ export function CommitMessageArea() {
   const handleCommitAndPush = useCallback(async () => {
     if (!canCommit) return;
     setShowDropdown(false);
-    await commitAndPush();
-  }, [canCommit, commitAndPush]);
+    await commit();
+    await bridge.request("openPushPanel");
+  }, [canCommit, commit]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
