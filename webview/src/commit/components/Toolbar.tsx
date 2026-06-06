@@ -352,7 +352,7 @@ function CollapseAllIcon() {
 /** Push icon — green ↗ text matching branch ahead indicator */
 function PushIcon() {
   return (
-    <span style={{ color: "#499c54", fontSize: "16px", fontWeight: 700 }}>
+    <span style={{ color: "#499c54", fontSize: "16px", fontWeight: 400 }}>
       ↗
     </span>
   );
@@ -361,7 +361,7 @@ function PushIcon() {
 /** Pull icon — blue ↙ text matching branch behind indicator */
 function PullIcon() {
   return (
-    <span style={{ color: "#3574f0", fontSize: "16px", fontWeight: 700 }}>
+    <span style={{ color: "#3574f0", fontSize: "16px", fontWeight: 400 }}>
       ↙
     </span>
   );
