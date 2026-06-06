@@ -270,6 +270,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
       await bridgeWithProgress("revertFileChanges", {
         hash: selectedCommitHash,
         filePath,
+        status: file.status,
       });
     } catch (err) {
       console.error("Revert file changes failed:", err);

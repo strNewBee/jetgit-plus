@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { GitCache } from "./cache";
@@ -206,6 +207,36 @@ export class GitService {
 
     this.cache.set(cacheKey, branches);
     return branches;
+  }
+
+  async getRemoteBranches(): Promise<
+    { remote: string; branches: string[] }[]
+  > {
+    const allBranches = await this.getBranches();
+    const remoteBranches = allBranches.filter((b) => b.isRemote);
+
+    const groups = new Map<string, string[]>();
+    for (const branch of remoteBranches) {
+      const slashIdx = branch.name.indexOf("/");
+      if (slashIdx === -1) continue;
+      const remote = branch.name.substring(0, slashIdx);
+      const branchName = branch.name.substring(slashIdx + 1);
+      if (!groups.has(remote)) {
+        groups.set(remote, []);
+      }
+      groups.get(remote)!.push(branchName);
+    }
+
+    // Sort branches alphabetically within each group (case-insensitive)
+    const result: { remote: string; branches: string[] }[] = [];
+    for (const [remote, branchList] of groups) {
+      branchList.sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
+      result.push({ remote, branches: branchList });
+    }
+
+    return result;
   }
 
   async getTags(): Promise<TagInfo[]> {
@@ -553,12 +584,13 @@ export class GitService {
     this.invalidateCache();
   }
 
-  async push(branchName: string, force = false): Promise<void> {
+  async push(branchName: string, force = false, remote = "origin", targetBranch?: string): Promise<string> {
     const args = ["push"];
     if (force) args.push("--force-with-lease");
-    args.push("origin", branchName);
-    await this.execGit(args);
+    args.push(remote, `${branchName}:${targetBranch || branchName}`);
+    const output = await this.execGit(args);
     this.invalidateCache();
+    return output;
   }
 
   /**
@@ -619,9 +651,37 @@ export class GitService {
     this.invalidateCache();
   }
 
-  async checkoutFileFromParent(hash: string, filePath: string): Promise<void> {
-    // Revert a file to its state before this commit (parent)
-    await this.execGit(["checkout", `${hash}~1`, "--", filePath]);
+  async checkoutFileFromParent(
+    hash: string,
+    filePath: string,
+    status?: string,
+  ): Promise<void> {
+    if (status === "added") {
+      // File was newly added in this commit, revert means removing it
+      // Use --cached to handle case where file may not exist on disk
+      try {
+        await this.execGit(["rm", "-f", "--", filePath]);
+      } catch {
+        // File might not exist in working tree or index, try removing from index only
+        try {
+          await this.execGit(["rm", "-f", "--cached", "--", filePath]);
+        } catch {
+          // File doesn't exist at all - nothing to revert
+        }
+        // Also try to remove the physical file if it exists
+        try {
+          await fs.unlink(path.join(this.cwd, filePath));
+        } catch {
+          // File already doesn't exist on disk
+        }
+      }
+    } else if (status === "deleted") {
+      // File was deleted in this commit, revert means restoring it from parent
+      await this.execGit(["checkout", `${hash}~1`, "--", filePath]);
+    } else {
+      // File was modified/renamed/copied, revert to parent state
+      await this.execGit(["checkout", `${hash}~1`, "--", filePath]);
+    }
     this.invalidateCache();
   }
 
@@ -636,6 +696,88 @@ export class GitService {
   async revertCommit(hash: string): Promise<void> {
     await this.execGit(["revert", "--no-edit", hash]);
     this.invalidateCache();
+  }
+
+  async dropCommit(hash: string): Promise<void> {
+    const headHash = (await this.execGit(["rev-parse", "HEAD"])).trim();
+    const isHead = hash === headHash;
+
+    if (isHead) {
+      await this.dropHeadCommit(hash);
+    } else {
+      await this.dropNonHeadCommit(hash);
+    }
+    this.invalidateCache();
+  }
+
+  private async dropHeadCommit(hash: string): Promise<void> {
+    // Verify commit has a parent
+    const parents = await this.getCommitParents(hash);
+    if (parents.length === 0) {
+      throw new Error("Cannot drop the initial commit (no parent)");
+    }
+    await this.execGit(["reset", "--mixed", "HEAD~1"]);
+  }
+
+  private async dropNonHeadCommit(hash: string): Promise<void> {
+    // 1. Capture the target commit's diff BEFORE rebase
+    const diff = await this.execGit(["diff-tree", "-p", hash]);
+
+    // 2. Check working directory status
+    const status = await this.execGit(["status", "--porcelain"]);
+    const isDirty = status.trim().length > 0;
+
+    // 3. Stash if dirty
+    if (isDirty) {
+      await this.execGit(["stash", "push", "-u", "-m", "drop-commit-autostash"]);
+    }
+
+    // 4. Execute rebase to remove the commit
+    try {
+      await this.execGit(["rebase", "--onto", `${hash}^`, hash]);
+    } catch (rebaseErr) {
+      // Abort rebase on failure
+      try {
+        await this.execGit(["rebase", "--abort"]);
+      } catch {
+        // ignore abort errors
+      }
+
+      // Restore stash if it was used
+      if (isDirty) {
+        try {
+          await this.execGit(["stash", "pop"]);
+        } catch {
+          // stash pop failure is secondary
+        }
+      }
+
+      throw rebaseErr;
+    }
+
+    // 5. Restore stashed changes on success
+    if (isDirty) {
+      await this.execGit(["stash", "pop"]);
+    }
+
+    // 6. Apply dropped commit's diff to working directory via temp file
+    if (diff.trim()) {
+      const tmpFile = path.join(os.tmpdir(), `drop-commit-${hash}.patch`);
+      try {
+        await fs.writeFile(tmpFile, diff, "utf-8");
+        await this.execGit(["apply", "--3way", tmpFile]);
+      } catch {
+        throw new Error(
+          "Commit was removed from history but its changes could not be applied to the working directory",
+        );
+      } finally {
+        try {
+          await fs.unlink(tmpFile);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
   }
 
   async createBranchFromCommit(
@@ -798,15 +940,31 @@ export class GitService {
   }
 
   async rollbackFile(filePath: string): Promise<void> {
-    // Check if file is untracked
+    // Check if file exists in HEAD (i.e., was previously committed)
+    let existsInHead = false;
     try {
-      await this.execGit(["ls-files", "--error-unmatch", filePath]);
-      // File is tracked, checkout from HEAD
-      await this.execGit(["checkout", "HEAD", "--", filePath]);
+      await this.execGit(["cat-file", "-e", `HEAD:${filePath}`]);
+      existsInHead = true;
     } catch {
-      // File is untracked, remove it
+      existsInHead = false;
+    }
+
+    if (existsInHead) {
+      // File exists in HEAD - restore to HEAD version (handles both staged and unstaged changes)
+      await this.execGit(["checkout", "HEAD", "--", filePath]);
+    } else {
+      // File is new (not in HEAD) - remove from index and delete from disk
+      try {
+        await this.execGit(["rm", "-f", "--cached", "--", filePath]);
+      } catch {
+        // Not in index either, nothing to unstage
+      }
       const fullPath = path.join(this.cwd, filePath);
-      await fs.unlink(fullPath);
+      try {
+        await fs.unlink(fullPath);
+      } catch {
+        // File already doesn't exist on disk
+      }
     }
   }
 

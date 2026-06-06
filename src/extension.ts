@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { GitService } from "./git/gitService";
 import type { DiffFile, LaneSnapshot } from "./git/types";
 import { MessageRouter } from "./messages/messageRouter";
+import { ErrorCode } from "./messages/protocol";
 import { CommitViewProvider } from "./views/commitViewProvider";
 import { ConflictsManager } from "./views/conflictsManager";
 import { DiffEditorManager } from "./views/diffEditorManager";
@@ -287,6 +288,13 @@ export function activate(context: vscode.ExtensionContext) {
       return NOT_GIT_REPO;
     }
     return gitService.getBranches();
+  });
+
+  messageRouter.handle("getRemoteBranches", async () => {
+    if (!gitService) {
+      return NOT_GIT_REPO;
+    }
+    return gitService.getRemoteBranches();
   });
 
   messageRouter.handle("getTags", async () => {
@@ -579,13 +587,21 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
     const force = params.force as boolean | undefined;
+    const remote = (params.remote as string) || "origin";
+    const targetBranch = (params.targetBranch as string) || branchName;
     return withProgress(messageRouter, async () => {
-      await gitService.push(branchName, force ?? false);
-      pushPanel.close();
+      const output = await gitService.push(branchName, force ?? false, remote, targetBranch);
       messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
       messageRouter.broadcastEvent("commitStateChanged", {});
-      return { success: true };
+      // Return push output so webview can show result toast before closing
+      const isUpToDate = output?.includes("Everything up-to-date") || output?.includes("up to date");
+      return { success: true, data: { output: output ?? "", isUpToDate } };
     });
+  });
+
+  messageRouter.handle("closePushPanel", async () => {
+    pushPanel.close();
+    return { success: true };
   });
 
   messageRouter.handle("openPushPanel", async () => {
@@ -637,7 +653,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const hash = params.hash as string;
     const filePath = params.filePath as string;
-    await gitService.checkoutFileFromParent(hash, filePath);
+    const status = params.status as string | undefined;
+    await gitService.checkoutFileFromParent(hash, filePath, status);
     messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
     return { success: true };
   });
@@ -668,6 +685,50 @@ export function activate(context: vscode.ExtensionContext) {
     return withProgress(messageRouter, async () => {
       await gitService.revertCommit(hash);
       messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      return { success: true };
+    });
+  });
+
+  messageRouter.handle("dropCommit", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+
+    const hash = params.hash as string;
+
+    // Validate hash format (40-char hex)
+    if (!hash || !/^[0-9a-f]{40}$/i.test(hash)) {
+      return {
+        success: false,
+        error: { code: ErrorCode.INVALID_REF, message: "Invalid commit hash" },
+      };
+    }
+
+    // Check if merge commit (reject before emitting operationStart)
+    const parents = await gitService.getCommitParents(hash);
+    if (parents.length > 1) {
+      return {
+        success: false,
+        error: {
+          code: ErrorCode.GIT_COMMAND_FAILED,
+          message: "Merge commits cannot be dropped",
+        },
+      };
+    }
+
+    // Proceed with progress and 30-second timeout
+    return withProgress(messageRouter, async () => {
+      const timeoutMs = 30_000;
+      const dropPromise = gitService.dropCommit(hash);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Operation timed out")),
+          timeoutMs,
+        ),
+      );
+
+      await Promise.race([dropPromise, timeoutPromise]);
+
+      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      messageRouter.broadcastEvent("commitStateChanged", {});
       return { success: true };
     });
   });

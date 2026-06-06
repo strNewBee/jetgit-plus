@@ -1103,14 +1103,28 @@ function BranchContextMenu({
   const handleCheckout = async () => {
     onClose();
     try {
-      await bridgeWithProgress("checkoutBranch", { branchName: branch.name });
+      if (branch.isRemote) {
+        // For remote branches like "origin/dev", create a local tracking branch "dev"
+        const localName = branch.name.substring(branch.name.indexOf("/") + 1);
+        await bridgeWithProgress("createBranch", {
+          newBranchName: localName,
+          startPoint: branch.name,
+          checkout: true,
+        });
+      } else {
+        await bridgeWithProgress("checkoutBranch", { branchName: branch.name });
+      }
     } catch (err) {
       console.error("Checkout failed:", err);
     }
   };
 
   const handleNewBranch = () => {
-    onCreateBranch(branch.name, branch.name);
+    // For remote branches like "origin/stg", strip the remote prefix for the default name
+    const defaultName = branch.isRemote
+      ? branch.name.substring(branch.name.indexOf("/") + 1)
+      : branch.name;
+    onCreateBranch(branch.name, defaultName);
   };
 
   const handleDelete = async () => {
