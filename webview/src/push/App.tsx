@@ -1,18 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bridge } from "../shared/bridge";
+import { CommitInfo } from "../shared/components/CommitInfo";
+import type { Commit } from "../shared/types/git";
 import { RemoteBranchSelector } from "./components/RemoteBranchSelector";
 import { useDraggableDivider } from "./hooks/useDraggableDivider";
 import { formatRemoteBranchLabel } from "./utils/branchUtils";
 import "./push.css";
-
-interface CommitInfo {
-  hash: string;
-  shortHash: string;
-  subject: string;
-  authorName: string;
-  authorEmail: string;
-  authorDate: string;
-}
 
 interface DiffFile {
   oldPath: string;
@@ -25,7 +18,7 @@ export function PushApp() {
   const branchName = root?.dataset.branch ?? "";
   const remoteName = root?.dataset.remote ?? "origin";
 
-  const [commits, setCommits] = useState<CommitInfo[]>([]);
+  const [commits, setCommits] = useState<Commit[]>([]);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [pushing, setPushing] = useState(false);
@@ -47,7 +40,7 @@ export function PushApp() {
       try {
         const result = (await bridge.request("getAheadCommits", {
           branchName,
-        })) as { commits: CommitInfo[] } | null;
+        })) as { commits: Commit[] } | null;
         const list = result?.commits ?? [];
         setCommits(list);
         if (list.length > 0) {
@@ -126,16 +119,6 @@ export function PushApp() {
   }, []);
 
   const selectedCommit = commits.find((c) => c.hash === selectedHash);
-
-  function formatDate(dateStr: string): string {
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return dateStr;
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const hh = String(d.getHours()).padStart(2, "0");
-    const min = String(d.getMinutes()).padStart(2, "0");
-    return `${mm}/${dd}/${d.getFullYear().toString().slice(2)} at ${hh}:${min}`;
-  }
 
   return (
     <div className="push-container">
@@ -242,15 +225,7 @@ export function PushApp() {
 
               {/* Commit info */}
               <div className="push-commit-info">
-                <div className="push-commit-message">
-                  {selectedCommit.subject}
-                </div>
-                <div className="push-commit-meta">
-                  {selectedCommit.shortHash} {selectedCommit.authorName}
-                  {" <"}
-                  {selectedCommit.authorEmail}
-                  {">"} on {formatDate(selectedCommit.authorDate)}
-                </div>
+                <CommitInfo commit={selectedCommit} />
               </div>
             </>
           )}
