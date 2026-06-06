@@ -199,7 +199,16 @@ export function PushApp() {
             onClick={() => setShowPushMenu(!showPushMenu)}
             disabled={pushing || commits.length === 0}
           >
-            ▾
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <polyline points="4,6 8,10 12,6" />
+            </svg>
           </button>
           {showPushMenu && (
             <>

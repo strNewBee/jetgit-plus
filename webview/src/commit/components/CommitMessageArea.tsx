@@ -189,7 +189,16 @@ export function CommitMessageArea() {
             disabled={!canCommit}
             onClick={() => setShowDropdown(!showDropdown)}
           >
-            ▾
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <polyline points="4,6 8,10 12,6" />
+            </svg>
           </button>
           {showDropdown && (
             <div className="commit-dropdown-menu">
