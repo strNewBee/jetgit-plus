@@ -173,10 +173,5 @@ export class DiffEditorManager {
       rightUri,
       title,
     );
-
-    // Maximize editor area for full-screen diff experience
-    void vscode.commands.executeCommand(
-      "workbench.action.maximizeEditorHideSidebar",
-    );
   }
 }
