@@ -355,13 +355,13 @@ function PushIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <path
         d="M4 12L12 4"
-        stroke="#59a869"
+        stroke="#499c54"
         strokeWidth="1.8"
         strokeLinecap="round"
       />
       <path
         d="M6 4H12V10"
-        stroke="#59a869"
+        stroke="#499c54"
         strokeWidth="1.8"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -376,13 +376,13 @@ function PullIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <path
         d="M12 4L4 12"
-        stroke="#6fafbd"
+        stroke="#3574f0"
         strokeWidth="1.8"
         strokeLinecap="round"
       />
       <path
         d="M10 12H4V6"
-        stroke="#6fafbd"
+        stroke="#3574f0"
         strokeWidth="1.8"
         strokeLinecap="round"
         strokeLinejoin="round"
