@@ -125,7 +125,19 @@ export function PushApp() {
                   {files.length} file{files.length !== 1 ? "s" : ""}
                 </div>
                 {files.map((f) => (
-                  <div key={f.newPath || f.oldPath} className="push-file-item">
+                  <div
+                    key={f.newPath || f.oldPath}
+                    className="push-file-item"
+                    onClick={() => {
+                      if (selectedHash) {
+                        bridge.request("openDiffEditor", {
+                          commit: selectedHash,
+                          filePath: f.newPath || f.oldPath,
+                          file: f,
+                        });
+                      }
+                    }}
+                  >
                     <span className="push-file-name">
                       {(f.newPath || f.oldPath).split("/").pop()}
                     </span>
