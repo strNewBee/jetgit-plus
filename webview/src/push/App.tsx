@@ -11,6 +11,61 @@ import { useDraggableDivider } from "./hooks/useDraggableDivider";
 import { formatRemoteBranchLabel } from "./utils/branchUtils";
 import "./push.css";
 
+interface PushRejectedState {
+  show: boolean;
+  branchName: string;
+}
+
+function PushRejectedDialog({
+  branchName,
+  onRebase,
+  onMerge,
+  onCancel,
+}: {
+  branchName: string;
+  onRebase: () => void;
+  onMerge: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="push-rejected-overlay">
+      <div className="push-rejected-dialog">
+        <div className="push-rejected-header">
+          <span className="push-rejected-icon">⚠️</span>
+          <span className="push-rejected-title">Push Rejected</span>
+        </div>
+        <p className="push-rejected-message">
+          Push of the current branch "{branchName}" was rejected. Remote changes
+          need to be merged before pushing.
+        </p>
+        <div className="push-rejected-actions">
+          <button
+            type="button"
+            className="push-btn push-btn-secondary"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="push-btn push-btn-rebase"
+            onClick={onRebase}
+          >
+            Rebase
+          </button>
+          <button
+            type="button"
+            className="push-btn push-btn-merge"
+            onClick={onMerge}
+          >
+            Merge
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PushApp() {
   const root = document.getElementById("root");
   const branchName = root?.dataset.branch ?? "";
@@ -22,6 +77,10 @@ export function PushApp() {
   const [pushing, setPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPushMenu, setShowPushMenu] = useState(false);
+  const [pushRejected, setPushRejected] = useState<PushRejectedState>({
+    show: false,
+    branchName: "",
+  });
 
   // Editable remote branch target state
   const [targetRemote, setTargetRemote] = useState(remoteName);
@@ -95,14 +154,78 @@ export function PushApp() {
       } catch (err) {
         setPushing(false);
         const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
-        bridge
-          .request("showErrorNotification", { message: msg })
-          .catch(() => {});
+        // Detect push rejected due to non-fast-forward
+        if (
+          msg.includes("non-fast-forward") ||
+          msg.includes("[rejected]") ||
+          msg.includes("failed to push some refs")
+        ) {
+          setPushRejected({ show: true, branchName });
+          setError(msg);
+        } else {
+          setError(msg);
+          bridge
+            .request("showErrorNotification", { message: msg })
+            .catch(() => {});
+        }
       }
     },
     [branchName, targetRemote, targetBranch, commits.length],
   );
+
+  const handleRebaseAndPush = useCallback(async () => {
+    setPushRejected({ show: false, branchName: "" });
+    setError(null);
+    setPushing(true);
+    try {
+      await bridge.request("pullRebase", { branchName });
+      // After successful rebase, retry push
+      await bridge.request("executePush", {
+        branchName,
+        remote: targetRemote,
+        targetBranch: targetBranch,
+        force: false,
+      });
+      setPushing(false);
+      const message = `Rebased and pushed to ${targetRemote}/${targetBranch}`;
+      bridge.request("showInfoNotification", { message }).catch(() => {});
+      setTimeout(() => {
+        bridge.request("closePushPanel");
+      }, 500);
+    } catch (err) {
+      setPushing(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+    }
+  }, [branchName, targetRemote, targetBranch]);
+
+  const handleMergeAndPush = useCallback(async () => {
+    setPushRejected({ show: false, branchName: "" });
+    setError(null);
+    setPushing(true);
+    try {
+      await bridge.request("pullMerge", { branchName });
+      // After successful merge, retry push
+      await bridge.request("executePush", {
+        branchName,
+        remote: targetRemote,
+        targetBranch: targetBranch,
+        force: false,
+      });
+      setPushing(false);
+      const message = `Merged and pushed to ${targetRemote}/${targetBranch}`;
+      bridge.request("showInfoNotification", { message }).catch(() => {});
+      setTimeout(() => {
+        bridge.request("closePushPanel");
+      }, 500);
+    } catch (err) {
+      setPushing(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+    }
+  }, [branchName, targetRemote, targetBranch]);
 
   const handleBranchSelect = useCallback((remote: string, branch: string) => {
     setTargetRemote(remote);
@@ -365,9 +488,44 @@ export function PushApp() {
 
       {/* Progress bar */}
       {pushing && (
-        <div className="push-progress-bar">
-          <div className="push-progress-bar__track" />
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 3,
+            zIndex: 10000,
+            overflow: "hidden",
+            background: "rgba(0, 122, 204, 0.15)",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: "40%",
+              background:
+                "linear-gradient(90deg, transparent, #007acc 30%, #3794ff 70%, transparent)",
+              animation: "progress-slide 1s infinite linear",
+            }}
+          />
+          <style>
+            {`@keyframes progress-slide {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(250%); }
+            }`}
+          </style>
         </div>
+      )}
+
+      {/* Push Rejected Dialog */}
+      {pushRejected.show && (
+        <PushRejectedDialog
+          branchName={pushRejected.branchName}
+          onRebase={handleRebaseAndPush}
+          onMerge={handleMergeAndPush}
+          onCancel={() => setPushRejected({ show: false, branchName: "" })}
+        />
       )}
     </div>
   );

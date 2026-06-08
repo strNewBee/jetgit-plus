@@ -1,4 +1,5 @@
 .push-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -213,29 +214,33 @@
   bottom: 100%;
   right: 0;
   margin-bottom: 4px;
-  background: var(--app-bg, #2d2d2d);
-  border: 1px solid var(--border, #555);
+  background: var(--vscode-menu-background, var(--app-bg, #2d2d2d));
+  border: 1px solid var(--vscode-menu-border, var(--border, #555));
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   z-index: 1000;
   min-width: 120px;
   overflow: hidden;
+  padding: 4px 0;
 }
 
-.push-menu-item {
+button.push-menu-item {
   display: block;
   width: 100%;
-  padding: 8px 16px;
+  padding: 6px 16px;
   text-align: left;
   background: none;
   border: none;
-  color: var(--app-fg, #ccc);
+  color: var(--app-fg, #333);
   font-size: 13px;
   cursor: pointer;
+  border-radius: 0;
+  height: auto;
 }
 
-.push-menu-item:hover {
-  background: var(--list-hoverBackground, rgba(255, 255, 255, 0.06));
+button.push-menu-item:hover:not(:disabled) {
+  background: var(--vscode-menu-selectionBackground, #e8f0fe);
+  color: var(--vscode-menu-selectionForeground, #333);
 }
 
 /* Draggable Split Divider */
@@ -411,4 +416,77 @@
   to {
     transform: translateX(100%);
   }
+}
+
+/* Push Rejected Dialog */
+.push-rejected-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.push-rejected-dialog {
+  background: var(--app-bg, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  padding: 24px 28px;
+  max-width: 440px;
+  width: 90%;
+}
+
+.push-rejected-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.push-rejected-icon {
+  font-size: 28px;
+}
+
+.push-rejected-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--app-fg, #333);
+}
+
+.push-rejected-message {
+  font-size: 13px;
+  color: var(--app-fg, #555);
+  line-height: 1.5;
+  margin: 0 0 20px 0;
+}
+
+.push-rejected-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.push-btn-rebase {
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+.push-btn-rebase:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.push-btn-merge {
+  background: var(--app-bg, #fff);
+  color: var(--app-fg, #333);
+  border: 1px solid var(--border, #ccc);
+  font-weight: 600;
+}
+
+.push-btn-merge:hover:not(:disabled) {
+  background: #f0f0f0;
 }

@@ -8,6 +8,7 @@ import { usePanelStore } from "../../shared/store/panel-store";
 import type { BranchInfo, TagInfo } from "../../shared/types/git";
 import { BranchSidebar as BranchSidebarComponent } from "./BranchSidebar";
 import { CreateBranchDialog } from "./CreateBranchDialog";
+import { PushDialog } from "./PushDialog";
 
 // ---------------------------------------------------------------------------
 // Inline SVG Icons (stroke-based, IDEA style)
@@ -325,6 +326,11 @@ export function BranchTree({
   const [createBranchDialog, setCreateBranchDialog] = useState<{
     startPoint: string;
     defaultName: string;
+  } | null>(null);
+
+  // Push dialog state
+  const [pushDialog, setPushDialog] = useState<{
+    branchName: string;
   } | null>(null);
 
   const handleContextMenu = useCallback(
@@ -658,6 +664,10 @@ export function BranchTree({
                 closeContextMenu();
                 setCreateBranchDialog({ startPoint, defaultName });
               }}
+              onPush={(branchName) => {
+                closeContextMenu();
+                setPushDialog({ branchName });
+              }}
             />,
             document.body,
           )}
@@ -687,6 +697,27 @@ export function BranchTree({
                   return match
                     ? match[1]
                     : `Branch '${branchName}' already exists.\nChange the name or overwrite existing branch.`;
+                }
+              }}
+            />,
+            document.body,
+          )}
+
+        {/* Push Dialog */}
+        {pushDialog &&
+          createPortal(
+            <PushDialog
+              branchName={pushDialog.branchName}
+              onClose={() => setPushDialog(null)}
+              onPush={async (force) => {
+                setPushDialog(null);
+                try {
+                  await bridgeWithProgress("pushBranch", {
+                    branchName: pushDialog.branchName,
+                    force,
+                  });
+                } catch (err) {
+                  console.error("Push failed:", err);
                 }
               }}
             />,
@@ -1007,6 +1038,7 @@ function BranchContextMenu({
   currentBranch,
   onClose,
   onCreateBranch,
+  onPush,
 }: {
   x: number;
   y: number;
@@ -1014,6 +1046,7 @@ function BranchContextMenu({
   currentBranch: string;
   onClose: () => void;
   onCreateBranch: (startPoint: string, defaultName: string) => void;
+  onPush: (branchName: string) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
@@ -1183,15 +1216,7 @@ function BranchContextMenu({
   };
 
   const handlePush = async () => {
-    onClose();
-    try {
-      await bridgeWithProgress("pushBranch", {
-        branchName: branch.name,
-        force: false,
-      });
-    } catch (err) {
-      console.error("Push failed:", err);
-    }
+    onPush(branch.name);
   };
 
   const handleUpdate = async () => {

@@ -172,6 +172,183 @@ interface MergeStateInfo {
   mergeMsg?: string;
 }
 
+interface CherryPickStateInfo {
+  isCherryPicking: boolean;
+  cherryPickHead?: string;
+}
+
+function CherryPickBanner() {
+  const [state, setState] = useState<CherryPickStateInfo>({
+    isCherryPicking: false,
+  });
+  const [loading, setLoading] = useState(false);
+
+  const fetchState = useCallback(async () => {
+    try {
+      const result = (await bridge.request(
+        "getCherryPickState",
+      )) as CherryPickStateInfo;
+      setState(result);
+    } catch {
+      setState({ isCherryPicking: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchState();
+    const unsub = bridge.onEvent((event) => {
+      if (event === "gitStateChanged" || event === "commitStateChanged") {
+        fetchState();
+      }
+    });
+    return unsub;
+  }, [fetchState]);
+
+  const handleAction = useCallback(
+    async (action: "continue" | "abort" | "skip") => {
+      setLoading(true);
+      try {
+        await bridge.request("cherryPickAction", { action });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        bridge
+          .request("showErrorNotification", { message: msg })
+          .catch(() => {});
+      } finally {
+        setLoading(false);
+        fetchState();
+      }
+    },
+    [fetchState],
+  );
+
+  if (!state.isCherryPicking) return null;
+
+  const shortHash = state.cherryPickHead
+    ? state.cherryPickHead.substring(0, 7)
+    : "";
+  const label = shortHash ? `Cherry-picking ${shortHash}` : "Cherry-picking";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 12px",
+        background: "#fff3e0",
+        borderBottom: "1px solid #ffe0b2",
+        fontSize: 12,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 14 }}>🍒</span>
+      <span style={{ fontWeight: 600, flex: 1, color: "#333" }}>{label}</span>
+      <Tooltip text="Continue Cherry-pick (git cherry-pick --continue)">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-disabled={loading}
+          onClick={() => !loading && handleAction("continue")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (!loading) handleAction("continue");
+            }
+          }}
+          className="rebase-action-btn rebase-continue"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M2.5 11.5L6 8L2.5 4.5"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M8.5 11.5L12 8L8.5 4.5"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      </Tooltip>
+      <Tooltip text="Skip Cherry-pick (git cherry-pick --skip)">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-disabled={loading}
+          onClick={() => !loading && handleAction("skip")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (!loading) handleAction("skip");
+            }
+          }}
+          className="rebase-action-btn rebase-continue"
+          style={{ background: "#fb8c00" }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M5 4L11 8L5 12"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      </Tooltip>
+      <Tooltip text="Abort Cherry-pick (git cherry-pick --abort)">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-disabled={loading}
+          onClick={() => !loading && handleAction("abort")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (!loading) handleAction("abort");
+            }
+          }}
+          className="rebase-action-btn rebase-abort"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M4 12L12 4M12 12L4 4"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      </Tooltip>
+    </div>
+  );
+}
+
 function MergeBanner() {
   const [state, setState] = useState<MergeStateInfo>({ isMerging: false });
   const [loading, setLoading] = useState(false);
@@ -372,6 +549,7 @@ export function CommitApp() {
         </button>
       </div>
       <RebaseBanner />
+      <CherryPickBanner />
       <MergeBanner />
       <ProgressBar visible={loading} />
       <div className="commit-content">

@@ -351,6 +351,22 @@ export function activate(context: vscode.ExtensionContext) {
     return gitService.getMergeState();
   });
 
+  messageRouter.handle("getCherryPickState", async () => {
+    if (!gitService) return { isCherryPicking: false };
+    return gitService.getCherryPickState();
+  });
+
+  messageRouter.handle("cherryPickAction", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const action = params.action as "continue" | "abort" | "skip";
+    return withProgress(messageRouter, async () => {
+      await gitService.cherryPickAction(action);
+      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      messageRouter.broadcastEvent("commitStateChanged", {});
+      return { success: true };
+    });
+  });
+
   messageRouter.handle("getRebaseState", async () => {
     if (!gitService) return { isRebasing: false };
     return gitService.getRebaseState();
@@ -632,6 +648,26 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("pullBranch", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const branchName = params.branchName as string | undefined;
+    return withProgress(messageRouter, async () => {
+      await gitService.pull(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      return { success: true };
+    });
+  });
+
+  messageRouter.handle("pullRebase", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const branchName = params.branchName as string | undefined;
+    return withProgress(messageRouter, async () => {
+      await gitService.pullRebase(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      return { success: true };
+    });
+  });
+
+  messageRouter.handle("pullMerge", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const branchName = params.branchName as string | undefined;
     return withProgress(messageRouter, async () => {

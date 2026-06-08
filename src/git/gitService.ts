@@ -7,6 +7,7 @@ import { GitCache } from "./cache";
 import { computeGraphLayout } from "./graphLayout";
 import type {
   BranchInfo,
+  CherryPickState,
   CommitNode,
   DiffFile,
   FileStatus,
@@ -403,6 +404,41 @@ export class GitService {
     }
   }
 
+  async getCherryPickState(): Promise<CherryPickState> {
+    try {
+      const cherryPickHead = (
+        await fs.readFile(
+          path.join(this.cwd, ".git", "CHERRY_PICK_HEAD"),
+          "utf-8",
+        )
+      ).trim();
+      return { isCherryPicking: true, cherryPickHead };
+    } catch {
+      return { isCherryPicking: false };
+    }
+  }
+
+  async cherryPickAction(action: "continue" | "abort" | "skip"): Promise<void> {
+    if (action === "continue") {
+      // Use --allow-empty to handle the case where cherry-pick becomes empty after conflict resolution
+      try {
+        await this.execGit(["cherry-pick", "--continue"]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("allow-empty")) {
+          await this.execGit(["commit", "--allow-empty"]);
+        } else {
+          throw err;
+        }
+      }
+    } else if (action === "skip") {
+      await this.execGit(["cherry-pick", "--skip"]);
+    } else {
+      await this.execGit(["cherry-pick", "--abort"]);
+    }
+    this.invalidateCache();
+  }
+
   async getRebaseState(): Promise<{
     isRebasing: boolean;
     branchName?: string;
@@ -627,6 +663,15 @@ export class GitService {
 
   async pull(branchName?: string): Promise<void> {
     const args = ["pull"];
+    if (branchName) {
+      args.push("origin", branchName);
+    }
+    await this.execGit(args);
+    this.invalidateCache();
+  }
+
+  async pullRebase(branchName?: string): Promise<void> {
+    const args = ["pull", "--rebase"];
     if (branchName) {
       args.push("origin", branchName);
     }

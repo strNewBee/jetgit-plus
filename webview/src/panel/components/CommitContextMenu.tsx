@@ -106,17 +106,22 @@ export function CommitContextMenu({
   } | null>(null);
   const [isRebasing, setIsRebasing] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
+  const [isCherryPicking, setIsCherryPicking] = useState(false);
 
-  // Query rebase/merge state to determine if Drop Commit should be disabled
+  // Query rebase/merge/cherry-pick state to determine if Drop Commit should be disabled
   useEffect(() => {
     const fetchRepoState = async () => {
       try {
-        const [rebaseState, mergeState] = await Promise.all([
+        const [rebaseState, mergeState, cherryPickState] = await Promise.all([
           bridge.request("getRebaseState") as Promise<{ isRebasing: boolean }>,
           bridge.request("getMergeState") as Promise<{ isMerging: boolean }>,
+          bridge.request("getCherryPickState") as Promise<{
+            isCherryPicking: boolean;
+          }>,
         ]);
         setIsRebasing(rebaseState?.isRebasing ?? false);
         setIsMerging(mergeState?.isMerging ?? false);
+        setIsCherryPicking(cherryPickState?.isCherryPicking ?? false);
       } catch {
         // If we can't determine state, leave as not disabled
       }
@@ -337,8 +342,9 @@ export function CommitContextMenu({
     }, 500);
   };
 
-  // Drop Commit is disabled when in detached HEAD, rebasing, or merging
-  const isDropCommitDisabled = !currentBranch || isRebasing || isMerging;
+  // Drop Commit is disabled when in detached HEAD, rebasing, merging, or cherry-picking
+  const isDropCommitDisabled =
+    !currentBranch || isRebasing || isMerging || isCherryPicking;
 
   const items: {
     label: string;

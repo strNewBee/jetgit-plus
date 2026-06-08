@@ -72,6 +72,33 @@ export class GitWatcher implements vscode.Disposable {
     mergeHeadWatcher.onDidDelete(() => this.notify("mergeState"));
     this.disposables.push(mergeHeadWatcher);
 
+    // .git/CHERRY_PICK_HEAD → mergeState (cherry-pick state)
+    const cherryPickHeadWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(gitBase, "CHERRY_PICK_HEAD"),
+    );
+    cherryPickHeadWatcher.onDidChange(() => this.notify("mergeState"));
+    cherryPickHeadWatcher.onDidCreate(() => this.notify("mergeState"));
+    cherryPickHeadWatcher.onDidDelete(() => this.notify("mergeState"));
+    this.disposables.push(cherryPickHeadWatcher);
+
+    // .git/rebase-merge/** → mergeState (rebase state)
+    const rebaseMergeWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(gitBase, "rebase-merge/**"),
+    );
+    rebaseMergeWatcher.onDidChange(() => this.notify("mergeState"));
+    rebaseMergeWatcher.onDidCreate(() => this.notify("mergeState"));
+    rebaseMergeWatcher.onDidDelete(() => this.notify("mergeState"));
+    this.disposables.push(rebaseMergeWatcher);
+
+    // .git/rebase-apply/** → mergeState (rebase state)
+    const rebaseApplyWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(gitBase, "rebase-apply/**"),
+    );
+    rebaseApplyWatcher.onDidChange(() => this.notify("mergeState"));
+    rebaseApplyWatcher.onDidCreate(() => this.notify("mergeState"));
+    rebaseApplyWatcher.onDidDelete(() => this.notify("mergeState"));
+    this.disposables.push(rebaseApplyWatcher);
+
     // .git/COMMIT_EDITMSG → log
     const commitMsgWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(gitBase, "COMMIT_EDITMSG"),

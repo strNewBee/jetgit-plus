@@ -97,6 +97,11 @@ export interface MergeState {
   mergeMsg?: string;
 }
 
+export interface CherryPickState {
+  isCherryPicking: boolean;
+  cherryPickHead?: string;
+}
+
 export interface FileVersions {
   base: string;
   ours: string;
