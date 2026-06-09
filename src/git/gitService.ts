@@ -662,7 +662,7 @@ export class GitService {
   }
 
   async pull(branchName?: string): Promise<void> {
-    const args = ["pull"];
+    const args = ["pull", "--autostash"];
     if (branchName) {
       args.push("origin", branchName);
     }
