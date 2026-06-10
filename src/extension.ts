@@ -75,6 +75,11 @@ export function activate(context: vscode.ExtensionContext) {
         GIT_BRAINS_SCHEME,
         contentProvider,
       ),
+      vscode.workspace.registerFileSystemProvider(
+        GIT_BRAINS_SCHEME,
+        contentProvider,
+        { isReadonly: true },
+      ),
     );
 
     diffManager = new DiffEditorManager(gitService);

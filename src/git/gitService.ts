@@ -295,6 +295,31 @@ export class GitService {
     }
   }
 
+  async getFileContentBuffer(ref: string, filePath: string): Promise<Buffer> {
+    if (!ref) {
+      return Buffer.alloc(0);
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["show", `${ref}:${filePath}`],
+        {
+          cwd: this.cwd,
+          maxBuffer: MAX_BUFFER,
+          encoding: "buffer",
+          env: {
+            ...process.env,
+            LC_ALL: "C",
+            GIT_TERMINAL_PROMPT: "0",
+          },
+        },
+      );
+      return stdout;
+    } catch {
+      return Buffer.alloc(0);
+    }
+  }
+
   async getCommitFiles(hash: string): Promise<DiffFile[]> {
     const output = await this.execGit([
       "diff-tree",
