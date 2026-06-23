@@ -211,6 +211,20 @@ export class GitService {
   }
 
   async getRemoteBranches(): Promise<{ remote: string; branches: string[] }[]> {
+    // Get the actual configured remotes (not inferred from tracking branches)
+    const remoteOutput = await this.execGit(["remote"]).catch(() => "");
+    const configuredRemotes = new Set(
+      remoteOutput
+        .trim()
+        .split("\n")
+        .map((r) => r.trim())
+        .filter(Boolean),
+    );
+
+    if (configuredRemotes.size === 0) {
+      return [];
+    }
+
     const allBranches = await this.getBranches();
     const remoteBranches = allBranches.filter((b) => b.isRemote);
 
@@ -219,11 +233,20 @@ export class GitService {
       const slashIdx = branch.name.indexOf("/");
       if (slashIdx === -1) continue;
       const remote = branch.name.substring(0, slashIdx);
+      // Only include branches for remotes that still exist
+      if (!configuredRemotes.has(remote)) continue;
       const branchName = branch.name.substring(slashIdx + 1);
       if (!groups.has(remote)) {
         groups.set(remote, []);
       }
       groups.get(remote)?.push(branchName);
+    }
+
+    // Ensure all configured remotes appear even if they have no tracking branches yet
+    for (const remote of configuredRemotes) {
+      if (!groups.has(remote)) {
+        groups.set(remote, []);
+      }
     }
 
     // Sort branches alphabetically within each group (case-insensitive)
@@ -445,6 +468,8 @@ export class GitService {
 
   async cherryPickAction(action: "continue" | "abort" | "skip"): Promise<void> {
     if (action === "continue") {
+      // Stage all resolved files before continuing (like IntelliJ IDEA behavior)
+      await this.execGit(["add", "-u"]);
       // Use --allow-empty to handle the case where cherry-pick becomes empty after conflict resolution
       try {
         await this.execGit(["cherry-pick", "--continue"]);
@@ -620,6 +645,10 @@ export class GitService {
   }
 
   async rebaseAction(action: "continue" | "abort" | "skip"): Promise<void> {
+    if (action === "continue") {
+      // Stage all resolved files before continuing
+      await this.execGit(["add", "-u"]);
+    }
     await this.execGit(["rebase", `--${action}`]);
     this.invalidateCache();
   }
@@ -630,6 +659,8 @@ export class GitService {
   }
 
   async mergeContinue(): Promise<void> {
+    // Stage all resolved files before committing
+    await this.execGit(["add", "-u"]);
     await this.execGit(["commit", "--no-edit"]);
     this.invalidateCache();
   }
@@ -661,8 +692,12 @@ export class GitService {
    * Get commits that are ahead of the remote tracking branch.
    * Returns commits in newest-first order.
    */
-  async getAheadCommits(branchName: string): Promise<CommitNode[]> {
-    const upstream = `origin/${branchName}`;
+  async getAheadCommits(
+    branchName: string,
+    remote?: string,
+  ): Promise<CommitNode[]> {
+    const remoteName = remote || (await this.getDefaultRemote(branchName));
+    const upstream = `${remoteName}/${branchName}`;
     // Check if upstream exists
     try {
       await this.execGit(["rev-parse", "--verify", upstream]);
@@ -995,6 +1030,44 @@ export class GitService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Get the default remote for the current branch.
+   * Tries the upstream tracking remote first, then falls back to the first configured remote.
+   */
+  async getDefaultRemote(branch?: string): Promise<string> {
+    // Try to get the upstream remote for the given branch
+    if (branch) {
+      try {
+        const output = await this.execGit([
+          "config",
+          `branch.${branch}.remote`,
+        ]);
+        const remote = output.trim();
+        if (remote) return remote;
+      } catch {
+        // No upstream configured
+      }
+    }
+
+    // Fall back to first configured remote
+    try {
+      const output = await this.execGit(["remote"]);
+      const remotes = output
+        .trim()
+        .split("\n")
+        .map((r) => r.trim())
+        .filter(Boolean);
+      if (remotes.length > 0) {
+        // Prefer "origin" if it exists, otherwise first remote
+        return remotes.includes("origin") ? "origin" : remotes[0];
+      }
+    } catch {
+      // ignore
+    }
+
+    return "origin";
   }
 
   async getLastCommitMessage(): Promise<string> {

@@ -217,28 +217,36 @@ export function CommitRow({
           gap: 6,
         }}
       >
-        <Tooltip text={commit.subject}>
-          <span
-            style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flexShrink: 1,
-              minWidth: 0,
-            }}
-          >
-            {commit.subject}
-          </span>
-        </Tooltip>
+        <span
+          style={{
+            flexShrink: 1,
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
+          <Tooltip text={commit.subject}>
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                display: "block",
+              }}
+            >
+              {commit.subject}
+            </span>
+          </Tooltip>
+        </span>
         {refItems.length > 0 && (
           <>
-            <span style={{ flex: 1 }} />
             <span
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
                 flexShrink: 0,
+                marginLeft: "auto",
+                paddingLeft: 8,
               }}
             >
               {/* Overlapping outline tag icons */}

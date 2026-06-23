@@ -1,5 +1,39 @@
 # Changelog / 更新日志
 
+## [0.4.17] - 2026-06-20
+
+### Added / 新增
+- **Push Panel: multi-remote switching** — push panel now supports switching between multiple remotes (e.g. origin, fork) via a dropdown selector, with separate branch input / Push 面板支持多 remote 切换，remote 下拉选择和 branch 输入框独立
+
+### Fixed / 修复
+- **Push Panel: stale remote list** — uses `git remote` directly; deleted remotes no longer appear / 修复已删除的 remote 仍显示的问题
+- **Push Panel: default remote detection** — auto-detects correct default remote from upstream tracking config / 自动检测正确的默认 remote
+- **Push Panel: ahead commits respect selected remote** — commit list updates dynamically when switching remotes / 切换 remote 后 commit 列表动态更新
+- **Dark theme: commit panel** — fixed tabs, toolbar buttons, textarea border, checkboxes, buttons (Cancel/Commit and Push) all using hardcoded light colors / 修复 commit 面板深色主题下各组件颜色不正确
+- **Dark theme: file name colors** — commit panel and FileTree now use IDEA Dark Island palette (blue for modified, green for added, etc.) instead of invisible dark-on-dark colors / 文件名颜色改为 IDEA Dark Island 风格，深色主题下清晰可见
+- **Dark theme: dropdown menus** — all dropdown/context menu backgrounds, borders, hover states, separators fixed across git log, commit panel, push panel / 所有下拉菜单和右键菜单深色主题适配
+- **Dark theme: push/rollback panels** — Cancel button, menu items, checkbox styling all fixed / Push/Rollback 面板按钮和 checkbox 深色适配
+
+## [0.4.16] - 2026-06-20
+
+### Added / 新增
+- **Push Panel: multi-remote switching** — push panel now supports switching between multiple remotes (e.g. origin, fork) via a dropdown selector / Push 面板支持切换多个 remote（如 origin、fork）
+- **Push Panel: separate remote selector & branch input** — remote is selected from a list, branch name is typed in a text input, independent of each other / Remote 下拉选择和 Branch 输入框分离，互不影响
+
+### Fixed / 修复
+- **Push Panel: stale remote list** — remote list now uses `git remote` directly and invalidates cache, deleted remotes no longer appear / 修复已删除的 remote 仍显示在列表中的问题
+- **Push Panel: default remote detection** — opening push panel now detects the correct default remote from upstream tracking config instead of hardcoding "origin" / 打开 Push 面板时自动检测正确的默认 remote，不再硬编码 origin
+- **Push Panel: ahead commits respect selected remote** — commit list updates dynamically when switching remotes, comparing against the correct remote tracking branch / 切换 remote 后 commit 列表会根据所选 remote 重新计算
+
+## [0.4.15] - 2026-06-10
+
+### Fixed / 修复
+- **Revert Selected Changes for added files** — no longer fails with "pathspec did not match" when reverting a file that was newly added in a commit / 修复 Revert Selected Changes 对新增文件报 pathspec 错误
+- **Rollback for staged new files** — correctly removes file from index and disk for files not yet in HEAD (untracked → staged → rollback) / 修复已暂存的新文件 Rollback 报 ENOENT 错误
+- **Remote branch checkout** — "Checkout" on a remote branch (e.g. `origin/dev`) now creates a local tracking branch (`dev`) instead of entering detached HEAD / 远程分支 Checkout 现在创建本地跟踪分支而非 detached HEAD
+- **New Branch default name** — "New Branch from 'origin/stg'" dialog now defaults to `stg` instead of `origin/stg` / 从远程分支创建新分支时默认名去掉 remote 前缀
+- **Ref tag/branch labels truncated** — commit message now properly shrinks with ellipsis so tag/branch labels always display fully / 修复 tag/branch 标签被 commit message 挤压截断的问题
+
 ## [0.4.14] - 2026-06-09
 
 ### Added / 新增

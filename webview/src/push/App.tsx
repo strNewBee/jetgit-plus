@@ -99,6 +99,7 @@ export function PushApp() {
       try {
         const result = (await bridge.request("getAheadCommits", {
           branchName,
+          remote: targetRemote,
         })) as { commits: Commit[] } | null;
         const list = result?.commits ?? [];
         setCommits(list);
@@ -110,7 +111,7 @@ export function PushApp() {
       }
     }
     load();
-  }, [branchName]);
+  }, [branchName, targetRemote]);
 
   useEffect(() => {
     if (!selectedHash) {
@@ -227,10 +228,13 @@ export function PushApp() {
     }
   }, [branchName, targetRemote, targetBranch]);
 
-  const handleBranchSelect = useCallback((remote: string, branch: string) => {
-    setTargetRemote(remote);
+  const handleBranchSelect = useCallback((branch: string) => {
     setTargetBranch(branch);
     setSelectorOpen(false);
+  }, []);
+
+  const handleRemoteSelect = useCallback((remote: string) => {
+    setTargetRemote(remote);
   }, []);
 
   const handleSelectorClose = useCallback(() => {
@@ -279,7 +283,8 @@ export function PushApp() {
           <RemoteBranchSelector
             currentRemote={targetRemote}
             currentBranch={targetBranch}
-            onSelect={handleBranchSelect}
+            onRemoteChange={handleRemoteSelect}
+            onBranchChange={handleBranchSelect}
             onClose={handleSelectorClose}
           />
         )}

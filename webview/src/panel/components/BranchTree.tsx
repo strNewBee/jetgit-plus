@@ -513,7 +513,7 @@ export function BranchTree({
               }}
               onBlur={(e) => {
                 (e.target as HTMLElement).style.borderColor =
-                  "var(--vscode-input-border, #c4c4c4)";
+                  "var(--vscode-input-border, #3c3c3c)";
               }}
               onMouseEnter={(e) => {
                 (e.target as HTMLElement).style.borderColor = "#3574f0";
@@ -521,7 +521,7 @@ export function BranchTree({
               onMouseLeave={(e) => {
                 if (document.activeElement !== e.target) {
                   (e.target as HTMLElement).style.borderColor =
-                    "var(--vscode-input-border, #c4c4c4)";
+                    "var(--vscode-input-border, #3c3c3c)";
                 }
               }}
             />
@@ -1325,14 +1325,14 @@ function BranchContextMenu({
         top: position ? position.top : -9999,
         left: position ? position.left : -9999,
         zIndex: 9999,
-        background: "var(--vscode-menu-background, #fff)",
-        border: "1px solid var(--vscode-menu-border, #e0e0e0)",
+        background: "var(--vscode-menu-background, #1e1e1e)",
+        border: "1px solid var(--vscode-menu-border, #454545)",
         borderRadius: 4,
         padding: "4px 0",
         minWidth: 160,
         maxHeight: "calc(100vh - 8px)",
         overflowY: "auto",
-        boxShadow: "0 3px 12px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05)",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
         visibility: position ? "visible" : "hidden",
       }}
     >
@@ -1342,7 +1342,7 @@ function BranchContextMenu({
             key={`sep-${i}`}
             style={{
               height: 1,
-              background: "var(--vscode-menu-separatorBackground, #e8e8e8)",
+              background: "var(--vscode-menu-separatorBackground, #454545)",
               margin: "4px 0",
             }}
           />
@@ -1354,16 +1354,16 @@ function BranchContextMenu({
               padding: "6px 16px",
               cursor: item.disabled ? "default" : "pointer",
               opacity: item.disabled ? 0.5 : 1,
-              color: "var(--vscode-menu-foreground, #333)",
+              color: "var(--vscode-menu-foreground, #ccc)",
               fontSize: "13px",
               whiteSpace: "nowrap",
             }}
             onMouseEnter={(e) => {
               if (!item.disabled) {
                 (e.currentTarget as HTMLElement).style.background =
-                  "var(--vscode-menu-selectionBackground, #e8f0fe)";
+                  "var(--vscode-list-hoverBackground, #2a2d2e)";
                 (e.currentTarget as HTMLElement).style.color =
-                  "var(--vscode-menu-selectionForeground, #333)";
+                  "var(--vscode-menu-selectionForeground, #fff)";
               }
             }}
             onMouseLeave={(e) => {

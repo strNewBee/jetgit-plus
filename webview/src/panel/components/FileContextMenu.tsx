@@ -336,14 +336,14 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
         top: position ? position.top : -9999,
         left: position ? position.left : -9999,
         zIndex: 9999,
-        background: "var(--vscode-menu-background, #fff)",
-        border: "1px solid var(--vscode-menu-border, #e0e0e0)",
+        background: "var(--vscode-menu-background, #1e1e1e)",
+        border: "1px solid var(--vscode-menu-border, #454545)",
         borderRadius: 4,
         padding: "4px 0",
         minWidth: 180,
         maxHeight: "calc(100vh - 8px)",
         overflowY: "auto",
-        boxShadow: "0 3px 12px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05)",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
         visibility: position ? "visible" : "hidden",
       }}
     >
@@ -353,7 +353,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
             key={`sep-${i}`}
             style={{
               height: 1,
-              background: "var(--vscode-menu-separatorBackground, #e8e8e8)",
+              background: "var(--vscode-menu-separatorBackground, #454545)",
               margin: "4px 0",
             }}
           />
@@ -364,7 +364,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
             style={{
               padding: "6px 12px",
               cursor: "pointer",
-              color: "var(--vscode-menu-foreground, #333)",
+              color: "var(--vscode-menu-foreground, #ccc)",
               fontSize: "13px",
               whiteSpace: "nowrap",
               display: "flex",
@@ -373,9 +373,9 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.background =
-                "var(--vscode-menu-selectionBackground, #e8f0fe)";
+                "var(--vscode-list-hoverBackground, #2a2d2e)";
               (e.currentTarget as HTMLElement).style.color =
-                "var(--vscode-menu-selectionForeground, #333)";
+                "var(--vscode-menu-selectionForeground, #fff)";
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLElement).style.background = "transparent";

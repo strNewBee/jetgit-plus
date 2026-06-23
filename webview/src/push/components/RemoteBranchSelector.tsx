@@ -1,33 +1,60 @@
 import { useEffect, useRef, useState } from "react";
+import { bridge } from "../../shared/bridge";
+
+interface RemoteBranchGroup {
+  remote: string;
+  branches: string[];
+}
 
 interface RemoteBranchSelectorProps {
   currentRemote: string;
   currentBranch: string;
-  onSelect: (remote: string, branch: string) => void;
+  onRemoteChange: (remote: string) => void;
+  onBranchChange: (branch: string) => void;
   onClose: () => void;
 }
 
 /**
- * An inline input that lets the user type/edit the target branch name.
- * Typically used when pushing a new branch for the first time.
+ * A panel with two parts:
+ * - Left: dropdown to select the remote (origin, fork, etc.)
+ * - Right: text input to type the branch name
  */
 export function RemoteBranchSelector({
   currentRemote,
   currentBranch,
-  onSelect,
+  onRemoteChange,
+  onBranchChange,
   onClose,
 }: RemoteBranchSelectorProps) {
-  const [value, setValue] = useState(currentBranch);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [remotes, setRemotes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [branchValue, setBranchValue] = useState(currentBranch);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus and select all text on mount
+  // Fetch remote list on mount
   useEffect(() => {
-    const input = inputRef.current;
-    if (input) {
-      input.focus();
-      input.select();
+    async function fetchRemotes() {
+      try {
+        const result = (await bridge.request(
+          "getRemoteBranches",
+          {},
+        )) as RemoteBranchGroup[];
+        const remoteNames = (result ?? []).map((g) => g.remote);
+        setRemotes(remoteNames);
+      } catch (err) {
+        console.error("Failed to fetch remotes:", err);
+      } finally {
+        setLoading(false);
+      }
     }
+    fetchRemotes();
+  }, []);
+
+  // Auto-focus branch input on mount
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
   }, []);
 
   // Close on click outside
@@ -37,6 +64,11 @@ export function RemoteBranchSelector({
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
       ) {
+        // Commit branch value before closing
+        const trimmed = branchValue.trim();
+        if (trimmed && trimmed !== currentBranch) {
+          onBranchChange(trimmed);
+        }
         onClose();
       }
     }
@@ -47,41 +79,67 @@ export function RemoteBranchSelector({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
+  }, [onClose, branchValue, currentBranch, onBranchChange]);
+
+  // Close on Escape
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const handleConfirm = () => {
-    const trimmed = value.trim();
-    if (trimmed) {
-      onSelect(currentRemote, trimmed);
-    } else {
-      onClose();
+  const handleBranchConfirm = () => {
+    const trimmed = branchValue.trim();
+    if (trimmed && trimmed !== currentBranch) {
+      onBranchChange(trimmed);
     }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleConfirm();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-    }
+    onClose();
   };
 
   return (
     <div className="remote-branch-selector" ref={containerRef}>
-      <div className="remote-branch-selector__input-row">
-        <span className="remote-branch-selector__remote-label">
-          {currentRemote} :
-        </span>
+      {/* Remote list */}
+      <div className="remote-branch-selector__remotes">
+        <div className="remote-branch-selector__section-label">Remote</div>
+        {loading && (
+          <div className="remote-branch-selector__loading">Loading...</div>
+        )}
+        {!loading &&
+          remotes.map((remote) => (
+            <div
+              key={remote}
+              className={`remote-branch-selector__remote-item selectable-row${remote === currentRemote ? " selected" : ""}`}
+              onClick={() => onRemoteChange(remote)}
+            >
+              {remote}
+            </div>
+          ))}
+        {!loading && remotes.length === 0 && (
+          <div className="remote-branch-selector__loading">
+            No remotes found
+          </div>
+        )}
+      </div>
+
+      {/* Branch input */}
+      <div className="remote-branch-selector__branch">
+        <div className="remote-branch-selector__section-label">Branch</div>
         <input
           ref={inputRef}
           type="text"
           className="remote-branch-selector__input"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleConfirm}
+          value={branchValue}
+          onChange={(e) => setBranchValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleBranchConfirm();
+            }
+          }}
           placeholder="branch name"
           spellCheck={false}
           autoComplete="off"

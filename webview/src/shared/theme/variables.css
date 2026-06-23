@@ -147,13 +147,13 @@ button:disabled {
 }
 
 .merge-btn-secondary {
-  border: 1px solid var(--border, #c4c4c4);
-  background: var(--vscode-button-secondaryBackground, #ededed);
+  border: 1px solid var(--border, #555);
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, var(--app-fg));
 }
 
 .merge-btn-secondary:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, #d4d4d4);
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
 .merge-btn-primary {
@@ -234,7 +234,7 @@ button.panel-toggle-btn {
 
 button.panel-toggle-btn:hover {
   opacity: 1;
-  background: #ededed;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
   color: var(--app-fg);
 }
 
@@ -259,7 +259,7 @@ button.panel-toggle-strip {
 
 button.panel-toggle-strip:hover {
   opacity: 1;
-  background: #ededed;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
   color: var(--app-fg);
 }
 
@@ -305,7 +305,7 @@ button.branch-sidebar-btn {
 
 button.branch-sidebar-btn:hover:not(:disabled) {
   opacity: 1;
-  background: #ededed;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
 button.branch-sidebar-btn:disabled {

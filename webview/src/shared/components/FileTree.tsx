@@ -11,12 +11,12 @@ import type { DiffFile } from "../types/git";
 // ---------------------------------------------------------------------------
 
 export const STATUS_COLORS: Record<string, string> = {
-  added: "rgb(7, 114, 23)",
-  modified: "rgb(0, 45, 170)",
-  deleted: "rgb(97, 101, 115)",
-  renamed: "#f0c674",
-  copied: "#f0c674",
-  conflicts: "rgb(217, 26, 41)",
+  added: "#6a8759",
+  modified: "#6897bb",
+  deleted: "#6c6c6c",
+  renamed: "#b9b462",
+  copied: "#b9b462",
+  conflicts: "#d1675a",
 };
 
 // ---------------------------------------------------------------------------

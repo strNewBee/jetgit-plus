@@ -89,17 +89,17 @@ function getStatusLabel(status: WorkingTreeFile["status"]): string {
 function getStatusColor(status: WorkingTreeFile["status"]): string {
   switch (status) {
     case "added":
-      return "rgb(7, 114, 23)";
+      return "#6a8759";
     case "untracked":
-      return "rgb(217, 26, 41)";
+      return "#d1675a";
     case "modified":
-      return "rgb(0, 45, 170)";
+      return "#6897bb";
     case "deleted":
-      return "rgb(97, 101, 115)";
+      return "#6c6c6c";
     case "renamed":
-      return "#f0c674";
+      return "#b9b462";
     case "conflicted":
-      return "rgb(217, 26, 41)";
+      return "#d1675a";
     default:
       return "inherit";
   }

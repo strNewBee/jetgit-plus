@@ -121,7 +121,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (!gitService) return;
       const branch = await gitService.getCurrentBranch();
       if (branch) {
-        pushPanel.open(branch);
+        const remote = await gitService.getDefaultRemote(branch);
+        pushPanel.open(branch, remote);
       }
     }),
     vscode.commands.registerCommand(
@@ -363,6 +364,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) {
       return NOT_GIT_REPO;
     }
+    // Invalidate branch cache to reflect latest remote changes
+    gitService.cache.invalidate("branches");
     return gitService.getRemoteBranches();
   });
 
@@ -676,7 +679,8 @@ export function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("getAheadCommits", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
-    const commits = await gitService.getAheadCommits(branchName);
+    const remote = params.remote as string | undefined;
+    const commits = await gitService.getAheadCommits(branchName, remote);
     return { commits };
   });
 
@@ -712,7 +716,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const branch = await gitService.getCurrentBranch();
     if (!branch) return { error: "No current branch" };
-    pushPanel.open(branch);
+    const remote = await gitService.getDefaultRemote(branch);
+    pushPanel.open(branch, remote);
     return { success: true };
   });
 
@@ -941,7 +946,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
     const ref = params.ref as string;
-    const uri = vscode.Uri.parse(`${GIT_BRAINS_SCHEME}:${filePath}?ref=${ref}`);
+    const uri = vscode.Uri.parse(
+      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${ref}`,
+    );
     await vscode.window.showTextDocument(uri, { preview: true });
     return { success: true };
   });
@@ -1136,7 +1143,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (staged) {
       // Show diff between HEAD and staged
       const leftUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:${filePath}?ref=HEAD`,
+        `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
       );
       await vscode.commands.executeCommand(
         "vscode.diff",
@@ -1147,7 +1154,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       // Show diff between HEAD and working tree
       const leftUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:${filePath}?ref=HEAD`,
+        `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
       );
       await vscode.commands.executeCommand(
         "vscode.diff",
@@ -1206,10 +1213,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Show diff between the stash version and the parent (before stash)
     const stashUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:${filePath}?ref=${stashId}`,
+      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${stashId}`,
     );
     const parentUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:${filePath}?ref=${stashId}^`,
+      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${stashId}^`,
     );
     await vscode.commands.executeCommand(
       "vscode.diff",
@@ -1295,10 +1302,10 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Create virtual documents for both sides and show diff
       const baseUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:shelved/${shelfName}/${filePath}?ref=base`,
+        `${GIT_BRAINS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base`,
       );
       const modifiedUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:shelved/${shelfName}/${filePath}?ref=modified`,
+        `${GIT_BRAINS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified`,
       );
 
       // Register temporary content for these URIs
@@ -1484,8 +1491,8 @@ export function activate(context: vscode.ExtensionContext) {
     const currentBranch = await gitService.getCurrentBranch();
     void vscode.commands.executeCommand(
       "vscode.diff",
-      vscode.Uri.parse(`git-brains:${currentBranch}`),
-      vscode.Uri.parse(`git-brains:${branchName}`),
+      vscode.Uri.parse(`${GIT_BRAINS_SCHEME}:/${currentBranch}`),
+      vscode.Uri.parse(`${GIT_BRAINS_SCHEME}:/${branchName}`),
       `${currentBranch} ↔ ${branchName}`,
     );
     return { success: true };
