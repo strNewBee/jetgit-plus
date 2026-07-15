@@ -1,5 +1,12 @@
 # Changelog / 更新日志
 
+## [0.5.0] - 2026-07-15
+
+### Changed / 变更
+- **Identity independence** — rebranded as independent extension "JetGit Plus": all `git-brains` identifiers (commands, views, view containers, URI scheme) renamed to `jetgit-plus`; publisher changed to `strNewBee`; extension ID is now `strNewBee.jetgit-plus`. The extension can now be installed alongside the upstream version without conflict / 身份独立化：所有 git-brains 标识符改为 jetgit-plus，扩展 ID 变为 strNewBee.jetgit-plus，可与上游版共存安装
+- **Version 0.5.0** — starting version line for the independent fork / 版本号升至 0.5.0，作为独立分支起点
+- **License** — added contributor copyright notice / 追加贡献者版权声明
+
 ## [0.4.17] - 2026-06-20
 
 ### Added / 新增
