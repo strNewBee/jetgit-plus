@@ -3,7 +3,7 @@ import type { MessageRouter } from "../messages/messageRouter";
 import { getWebviewHtml } from "./html";
 
 export class GitLogViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = "git-brains.gitLog";
+  public static readonly viewType = "jetgit-plus.gitLog";
 
   constructor(
     private readonly extensionUri: vscode.Uri,

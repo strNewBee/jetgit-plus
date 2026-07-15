@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
 
-export const GIT_BRAINS_SCHEME = "git-brains";
+export const GIT_BRAINS_SCHEME = "jetgit-plus";
 
 /**
  * Provides virtual file content for git file revisions.
- * Uri format: git-brains:/<filePath>?ref=<commitHash>
+ * Uri format: jetgit-plus:/<filePath>?ref=<commitHash>
  *
  * Implements both TextDocumentContentProvider (for text diff) and
  * FileSystemProvider (for binary files like images).

@@ -44,115 +44,115 @@
     "viewsContainers": {
       "panel": [
         {
-          "id": "git-brains-panel",
+          "id": "jetgit-plus-panel",
           "title": "JetGit",
           "icon": "$(git-branch)"
         }
       ],
       "activitybar": [
         {
-          "id": "git-brains-commit",
+          "id": "jetgit-plus-commit",
           "title": "Commit",
           "icon": "images/commit-icon.svg"
         }
       ]
     },
     "views": {
-      "git-brains-panel": [
+      "jetgit-plus-panel": [
         {
           "type": "webview",
-          "id": "git-brains.gitLog",
+          "id": "jetgit-plus.gitLog",
           "name": "Git Log"
         }
       ],
-      "git-brains-commit": [
+      "jetgit-plus-commit": [
         {
           "type": "webview",
-          "id": "git-brains.commitPanel",
+          "id": "jetgit-plus.commitPanel",
           "name": "Commit"
         }
       ]
     },
     "commands": [
       {
-        "command": "git-brains.refreshLog",
+        "command": "jetgit-plus.refreshLog",
         "title": "Refresh Git Log",
         "icon": "$(refresh)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.openMergeEditor",
+        "command": "jetgit-plus.openMergeEditor",
         "title": "Open Merge Editor",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.openConflicts",
+        "command": "jetgit-plus.openConflicts",
         "title": "Conflicts",
         "icon": "$(git-merge)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.openMergeEditorFromSCM",
+        "command": "jetgit-plus.openMergeEditorFromSCM",
         "title": "Open in JetGit Merge Editor",
         "icon": "$(git-merge)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.showFileHistory",
+        "command": "jetgit-plus.showFileHistory",
         "title": "(JetGit) Show File History",
         "icon": "$(history)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.nextDiff",
+        "command": "jetgit-plus.nextDiff",
         "title": "Next File Diff",
         "icon": "$(arrow-down)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.prevDiff",
+        "command": "jetgit-plus.prevDiff",
         "title": "Previous File Diff",
         "icon": "$(arrow-up)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.commitPanel.refresh",
+        "command": "jetgit-plus.commitPanel.refresh",
         "title": "Refresh Changes",
         "icon": "$(refresh)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.commitPanel.commit",
+        "command": "jetgit-plus.commitPanel.commit",
         "title": "Commit",
         "icon": "$(check)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.commitPanel.commitAndPush",
+        "command": "jetgit-plus.commitPanel.commitAndPush",
         "title": "Commit and Push",
         "icon": "$(cloud-upload)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.commitPanel.shelve",
+        "command": "jetgit-plus.commitPanel.shelve",
         "title": "Shelve Changes",
         "icon": "$(archive)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.commitPanel.unshelve",
+        "command": "jetgit-plus.commitPanel.unshelve",
         "title": "Unshelve Changes",
         "icon": "$(package)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.openPushPanel",
+        "command": "jetgit-plus.openPushPanel",
         "title": "Push...",
         "icon": "$(cloud-upload)",
         "category": "JetGit"
       },
       {
-        "command": "git-brains.editSource",
+        "command": "jetgit-plus.editSource",
         "title": "(JetGit) Edit Source",
         "icon": "$(go-to-file)",
         "category": "JetGit"
@@ -162,33 +162,33 @@
       "view/title": [],
       "scm/title": [
         {
-          "command": "git-brains.openConflicts",
+          "command": "jetgit-plus.openConflicts",
           "when": "scmProvider == git",
           "group": "navigation"
         }
       ],
       "scm/resourceState/context": [
         {
-          "command": "git-brains.openMergeEditorFromSCM",
+          "command": "jetgit-plus.openMergeEditorFromSCM",
           "when": "scmProvider == git && scmResourceGroup == merge",
           "group": "inline@10"
         }
       ],
       "editor/context": [
         {
-          "command": "git-brains.showFileHistory",
+          "command": "jetgit-plus.showFileHistory",
           "when": "editorTextFocus",
           "group": "git@1"
         },
         {
-          "command": "git-brains.editSource",
+          "command": "jetgit-plus.editSource",
           "when": "isInDiffEditor && resourceScheme != file",
           "group": "git@2"
         }
       ],
       "explorer/context": [
         {
-          "command": "git-brains.showFileHistory",
+          "command": "jetgit-plus.showFileHistory",
           "when": "!explorerResourceIsFolder",
           "group": "git@1"
         }
@@ -196,18 +196,18 @@
     },
     "keybindings": [
       {
-        "command": "git-brains.openPushPanel",
+        "command": "jetgit-plus.openPushPanel",
         "key": "ctrl+shift+k",
         "mac": "cmd+shift+k"
       },
       {
-        "command": "git-brains.nextDiff",
+        "command": "jetgit-plus.nextDiff",
         "key": "ctrl+f7",
         "mac": "cmd+f7",
         "when": "editorFocus"
       },
       {
-        "command": "git-brains.prevDiff",
+        "command": "jetgit-plus.prevDiff",
         "key": "ctrl+shift+f7",
         "mac": "cmd+shift+f7",
         "when": "editorFocus"

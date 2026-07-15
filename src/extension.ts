@@ -117,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 5. Register VSCode commands (always registered)
   context.subscriptions.push(
-    vscode.commands.registerCommand("git-brains.openPushPanel", async () => {
+    vscode.commands.registerCommand("jetgit-plus.openPushPanel", async () => {
       if (!gitService) return;
       const branch = await gitService.getCurrentBranch();
       if (branch) {
@@ -126,23 +126,23 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand(
-      "git-brains.openMergeEditor",
+      "jetgit-plus.openMergeEditor",
       (file?: string) => {
         mergeManager.openMergeEditor(file ?? "untitled");
       },
     ),
     vscode.commands.registerCommand(
-      "git-brains.openDiffEditor",
+      "jetgit-plus.openDiffEditor",
       (commit?: string, filePath?: string) => {
         if (commit && filePath && diffManager) {
           diffManager.openDiffEditor(commit, filePath);
         }
       },
     ),
-    vscode.commands.registerCommand("git-brains.refreshLog", () => {
+    vscode.commands.registerCommand("jetgit-plus.refreshLog", () => {
       messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
     }),
-    vscode.commands.registerCommand("git-brains.nextDiff", async () => {
+    vscode.commands.registerCommand("jetgit-plus.nextDiff", async () => {
       if (diffManager) {
         const result = await diffManager.nextDiff();
         if (!result) {
@@ -154,7 +154,7 @@ export function activate(context: vscode.ExtensionContext) {
         void vscode.window.showInformationMessage("JetGit: No workspace open.");
       }
     }),
-    vscode.commands.registerCommand("git-brains.prevDiff", async () => {
+    vscode.commands.registerCommand("jetgit-plus.prevDiff", async () => {
       if (diffManager) {
         const result = await diffManager.prevDiff();
         if (!result) {
@@ -166,11 +166,11 @@ export function activate(context: vscode.ExtensionContext) {
         void vscode.window.showInformationMessage("JetGit: No workspace open.");
       }
     }),
-    vscode.commands.registerCommand("git-brains.openConflicts", () => {
+    vscode.commands.registerCommand("jetgit-plus.openConflicts", () => {
       conflictsManager.openConflictsPanel();
     }),
     vscode.commands.registerCommand(
-      "git-brains.openMergeEditorFromSCM",
+      "jetgit-plus.openMergeEditorFromSCM",
       (arg?: unknown) => {
         const filePath = getScmResourcePath(arg);
         if (!filePath) {
@@ -183,20 +183,20 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
     vscode.commands.registerCommand(
-      "git-brains.showFileHistory",
+      "jetgit-plus.showFileHistory",
       async (uri?: vscode.Uri) => {
         const fileUri = uri ?? vscode.window.activeTextEditor?.document.uri;
         if (!fileUri || !workspaceRoot) return;
         const relativePath = vscode.workspace.asRelativePath(fileUri, false);
         // Ensure the Git Log panel is visible before sending the event
-        await vscode.commands.executeCommand("git-brains.gitLog.focus");
+        await vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
         // Send file filter to webview
         messageRouter.broadcastEvent("showFileHistory", {
           file: relativePath,
         });
       },
     ),
-    vscode.commands.registerCommand("git-brains.editSource", async () => {
+    vscode.commands.registerCommand("jetgit-plus.editSource", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -205,12 +205,12 @@ export function activate(context: vscode.ExtensionContext) {
       const character = editor.selection.active.character;
 
       // Resolve the actual workspace file path from diff URI
-      // Format: git-brains:/<relativePath>?ref=<commitHash>
+      // Format: jetgit-plus:/<relativePath>?ref=<commitHash>
       let filePath: string | undefined;
 
       if (uri.scheme === "file") {
         filePath = uri.fsPath;
-      } else if (uri.scheme === "git-brains" || uri.scheme === "git") {
+      } else if (uri.scheme === "jetgit-plus" || uri.scheme === "git") {
         // Extract relative path from URI path (strip leading /)
         const relativePath = uri.path.startsWith("/")
           ? uri.path.slice(1)
@@ -476,7 +476,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("openConflictsPanel", async () => {
-    await vscode.commands.executeCommand("git-brains.openConflicts");
+    await vscode.commands.executeCommand("jetgit-plus.openConflicts");
     return { success: true };
   });
 
@@ -1569,7 +1569,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   statusBarItem.text = "$(git-branch) IDEA Git";
   statusBarItem.tooltip = "Open IDEA Git Graph Panel";
-  statusBarItem.command = "git-brains.gitLog.focus";
+  statusBarItem.command = "jetgit-plus.gitLog.focus";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 }

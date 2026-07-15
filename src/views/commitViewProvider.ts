@@ -4,7 +4,7 @@ import type { MessageRouter } from "../messages/messageRouter";
 import { getWebviewHtml } from "./html";
 
 export class CommitViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = "git-brains.commitPanel";
+  public static readonly viewType = "jetgit-plus.commitPanel";
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -32,7 +32,7 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
     // First time opening: focus git log panel after a delay
     setTimeout(() => {
       if (webviewView.visible) {
-        void vscode.commands.executeCommand("git-brains.gitLog.focus");
+        void vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
         for (const cache of this.caches) {
           cache.invalidate();
         }
@@ -47,7 +47,7 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
       if (webviewView.visible) {
         // Small delay to ensure panels are ready
         setTimeout(() => {
-          void vscode.commands.executeCommand("git-brains.gitLog.focus");
+          void vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
           // Invalidate all git caches to ensure fresh data
           for (const cache of this.caches) {
             cache.invalidate();

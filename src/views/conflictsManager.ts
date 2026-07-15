@@ -17,7 +17,7 @@ export class ConflictsManager {
     }
 
     const panel = vscode.window.createWebviewPanel(
-      "git-brains.conflicts",
+      "jetgit-plus.conflicts",
       "Conflicts",
       vscode.ViewColumn.One,
       {

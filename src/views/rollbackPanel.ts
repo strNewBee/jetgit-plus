@@ -35,7 +35,7 @@ export class RollbackPanel {
     }
 
     this.panel = vscode.window.createWebviewPanel(
-      "git-brains.rollbackPanel",
+      "jetgit-plus.rollbackPanel",
       "Rollback Changes",
       vscode.ViewColumn.One,
       {
