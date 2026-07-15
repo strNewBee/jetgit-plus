@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
 
-export const GIT_BRAINS_SCHEME = "jetgit-plus";
+export const JETGIT_PLUS_SCHEME = "jetgit-plus";
 
 /**
  * Provides virtual file content for git file revisions.

@@ -8,8 +8,8 @@ import { CommitViewProvider } from "./views/commitViewProvider";
 import { ConflictsManager } from "./views/conflictsManager";
 import { DiffEditorManager } from "./views/diffEditorManager";
 import {
-  GIT_BRAINS_SCHEME,
   GitContentProvider,
+  JETGIT_PLUS_SCHEME,
 } from "./views/gitContentProvider";
 import { GitLogViewProvider } from "./views/gitLogViewProvider";
 import { MergeEditorManager } from "./views/mergeEditorManager";
@@ -72,11 +72,11 @@ export function activate(context: vscode.ExtensionContext) {
     contentProvider.setExternalContentMap(shelfDiffContent);
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(
-        GIT_BRAINS_SCHEME,
+        JETGIT_PLUS_SCHEME,
         contentProvider,
       ),
       vscode.workspace.registerFileSystemProvider(
-        GIT_BRAINS_SCHEME,
+        JETGIT_PLUS_SCHEME,
         contentProvider,
         { isReadonly: true },
       ),
@@ -947,7 +947,7 @@ export function activate(context: vscode.ExtensionContext) {
     const filePath = params.filePath as string;
     const ref = params.ref as string;
     const uri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${ref}`,
+      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${ref}`,
     );
     await vscode.window.showTextDocument(uri, { preview: true });
     return { success: true };
@@ -1143,7 +1143,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (staged) {
       // Show diff between HEAD and staged
       const leftUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
+        `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=HEAD`,
       );
       await vscode.commands.executeCommand(
         "vscode.diff",
@@ -1154,7 +1154,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       // Show diff between HEAD and working tree
       const leftUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
+        `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=HEAD`,
       );
       await vscode.commands.executeCommand(
         "vscode.diff",
@@ -1213,10 +1213,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Show diff between the stash version and the parent (before stash)
     const stashUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${stashId}`,
+      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${stashId}`,
     );
     const parentUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${stashId}^`,
+      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${stashId}^`,
     );
     await vscode.commands.executeCommand(
       "vscode.diff",
@@ -1302,10 +1302,10 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Create virtual documents for both sides and show diff
       const baseUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base`,
+        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base`,
       );
       const modifiedUri = vscode.Uri.parse(
-        `${GIT_BRAINS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified`,
+        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified`,
       );
 
       // Register temporary content for these URIs
@@ -1491,8 +1491,8 @@ export function activate(context: vscode.ExtensionContext) {
     const currentBranch = await gitService.getCurrentBranch();
     void vscode.commands.executeCommand(
       "vscode.diff",
-      vscode.Uri.parse(`${GIT_BRAINS_SCHEME}:/${currentBranch}`),
-      vscode.Uri.parse(`${GIT_BRAINS_SCHEME}:/${branchName}`),
+      vscode.Uri.parse(`${JETGIT_PLUS_SCHEME}:/${currentBranch}`),
+      vscode.Uri.parse(`${JETGIT_PLUS_SCHEME}:/${branchName}`),
       `${currentBranch} ↔ ${branchName}`,
     );
     return { success: true };

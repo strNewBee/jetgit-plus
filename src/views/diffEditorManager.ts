@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
 import type { DiffFile } from "../git/types";
-import { GIT_BRAINS_SCHEME } from "./gitContentProvider";
+import { JETGIT_PLUS_SCHEME } from "./gitContentProvider";
 
 export class DiffEditorManager {
   /** Current diff navigation state */
@@ -124,35 +124,35 @@ export class DiffEditorManager {
     switch (status) {
       case "added":
         leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=empty`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=empty`,
         );
         rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
         );
         break;
       case "deleted":
         leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}`,
         );
         rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=empty`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=empty`,
         );
         break;
       case "renamed":
       case "copied":
         leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}`,
         );
         rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
         );
         break;
       default: // modified
         leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${leftRef}`,
         );
         rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
         );
         break;
     }
