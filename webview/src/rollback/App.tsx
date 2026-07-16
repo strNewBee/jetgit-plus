@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodiconListFlat from "~icons/codicon/list-flat";
 import CodiconListTree from "~icons/codicon/list-tree";
 import { bridge } from "../shared/bridge";
 import { FileTree, type FileTreeNode } from "../shared/components/FileTree";
+import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
 import type { DiffFile } from "../shared/types/git";
 import "./rollback.css";
 
@@ -45,18 +46,57 @@ export function RollbackApp() {
   const [rolling, setRolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Listen for re-init events (when panel is reused)
+  // Track rolling in a ref so the re-init event listener can read the latest
+  // value without re-subscribing on every render.
+  const rollingRef = useRef(rolling);
+  rollingRef.current = rolling;
+
+  // Load file list for the current repo context. Used both for the initial
+  // mount (via the binding hook) and when the active repo changes.
+  const loadRepo = useCallback(async () => {
+    try {
+      const result = (await bridge.request("getWorkingTreeChanges")) as
+        | RollbackFileInfo[]
+        | { status: string }
+        | null;
+      // not_git_repo guard
+      if (!Array.isArray(result)) {
+        setFiles([]);
+        setCheckedFiles(new Set());
+        return;
+      }
+      const mapped: RollbackFileInfo[] = result.map((f) => ({
+        path: f.path,
+        status: f.status,
+        staged: f.staged,
+      }));
+      setFiles(mapped);
+      setCheckedFiles(new Set(mapped.map((f) => f.path)));
+      setError(null);
+      setCollapsed({});
+      setDeleteLocalCopies(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  // Idle-follow / execution-bound repo lifecycle: while a rollback is running,
+  // active-repo changes are deferred and only the latest is applied when idle.
+  useOperationRepoBinding(rolling, loadRepo);
+
+  // Listen for re-init events (when panel is reused). Ignored while a rollback
+  // is in progress so the in-flight operation is not disturbed.
   useEffect(() => {
     return bridge.onEvent((event, data) => {
-      if (event === "rollbackPanelInit") {
-        const { files: newFiles } = data as { files: RollbackFileInfo[] };
-        setFiles(newFiles);
-        setCheckedFiles(new Set(newFiles.map((f) => f.path)));
-        setError(null);
-        setRolling(false);
-        setDeleteLocalCopies(false);
-        setCollapsed({});
-      }
+      if (event !== "rollbackPanelInit") return;
+      if (rollingRef.current) return;
+      const { files: newFiles } = data as { files: RollbackFileInfo[] };
+      setFiles(newFiles);
+      setCheckedFiles(new Set(newFiles.map((f) => f.path)));
+      setError(null);
+      setRolling(false);
+      setDeleteLocalCopies(false);
+      setCollapsed({});
     });
   }, []);
 

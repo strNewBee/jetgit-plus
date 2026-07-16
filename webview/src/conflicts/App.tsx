@@ -10,6 +10,7 @@ import {
   type SelectionMode,
   useModifierClickSelection,
 } from "../shared/hooks/useModifierClickSelection";
+import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
 import { usePreventSelect } from "../shared/hooks/usePreventSelect";
 import type { DiffFile } from "../shared/types/git";
 
@@ -31,6 +32,9 @@ export function ConflictsApp() {
   const [mergeState, setMergeState] = useState<MergeState | null>(null);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  // True while an Accept Yours / Accept Theirs / Merge action is in flight so
+  // that active-repo changes are deferred until the mutation completes.
+  const [mutating, setMutating] = useState(false);
   const [groupByDir, setGroupByDir] = useState(true);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -54,6 +58,16 @@ export function ConflictsApp() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Idle-follow / execution-bound repo lifecycle. While loading or mutating,
+  // active-repo changes are deferred; the latest pending repo is applied once
+  // idle (clearing the selection and reloading conflict data for the new repo).
+  useOperationRepoBinding(loading || mutating, async () => {
+    setSelectedFiles([]);
+    setLastSelectedFile(null);
+    setLoading(true);
+    await loadData();
+  });
 
   // Convert string[] to DiffFile[]
   const diffFiles: DiffFile[] = useMemo(
@@ -126,19 +140,33 @@ export function ConflictsApp() {
 
   // Batch actions
   const handleAcceptYours = useCallback(async () => {
-    for (const filePath of selectedFiles) {
-      await bridge.request("acceptOurs", { filePath });
+    setMutating(true);
+    try {
+      for (const filePath of selectedFiles) {
+        await bridge.request("acceptOurs", { filePath });
+      }
+      setConflictFiles((prev) =>
+        prev.filter((f) => !selectedFiles.includes(f)),
+      );
+      setSelectedFiles([]);
+    } finally {
+      setMutating(false);
     }
-    setConflictFiles((prev) => prev.filter((f) => !selectedFiles.includes(f)));
-    setSelectedFiles([]);
   }, [selectedFiles]);
 
   const handleAcceptTheirs = useCallback(async () => {
-    for (const filePath of selectedFiles) {
-      await bridge.request("acceptTheirs", { filePath });
+    setMutating(true);
+    try {
+      for (const filePath of selectedFiles) {
+        await bridge.request("acceptTheirs", { filePath });
+      }
+      setConflictFiles((prev) =>
+        prev.filter((f) => !selectedFiles.includes(f)),
+      );
+      setSelectedFiles([]);
+    } finally {
+      setMutating(false);
     }
-    setConflictFiles((prev) => prev.filter((f) => !selectedFiles.includes(f)));
-    setSelectedFiles([]);
   }, [selectedFiles]);
 
   const openMergeEditor = useCallback(async (filePath: string) => {
@@ -146,8 +174,12 @@ export function ConflictsApp() {
   }, []);
 
   const handleMerge = useCallback(async () => {
-    if (selectedFiles.length > 0) {
+    if (selectedFiles.length <= 0) return;
+    setMutating(true);
+    try {
       await openMergeEditor(selectedFiles[0]);
+    } finally {
+      setMutating(false);
     }
   }, [selectedFiles, openMergeEditor]);
 

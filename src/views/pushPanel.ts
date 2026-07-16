@@ -41,7 +41,7 @@ export class PushPanel {
       this.panel.webview,
       this.extensionUri,
       "push",
-      { repoId, branch: branchName, remote: remoteName },
+      { "repo-id": repoId, branch: branchName, remote: remoteName },
     );
 
     const routerDisposable = this.messageRouter.registerWebview(

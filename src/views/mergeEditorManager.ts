@@ -10,8 +10,17 @@ export class MergeEditorManager {
     private readonly messageRouter: MessageRouter,
   ) {}
 
-  openMergeEditor(filePath: string, mergeMsg?: string): void {
-    const existing = this.panels.get(filePath);
+  /**
+   * Composite key so equal file paths in different repos cannot collide.
+   * Uses a NUL separator (illegal in paths) to avoid ambiguity.
+   */
+  private panelKey(repoId: string, filePath: string): string {
+    return `${repoId}\0${filePath}`;
+  }
+
+  openMergeEditor(repoId: string, filePath: string, mergeMsg?: string): void {
+    const key = this.panelKey(repoId, filePath);
+    const existing = this.panels.get(key);
     if (existing) {
       existing.reveal();
       return;
@@ -34,6 +43,7 @@ export class MergeEditorManager {
       this.extensionUri,
       "merge",
       {
+        "repo-id": repoId,
         file: filePath,
         "merge-msg": mergeMsg ?? "",
       },
@@ -41,9 +51,9 @@ export class MergeEditorManager {
 
     const routerDisposable = this.messageRouter.registerWebview(panel.webview);
 
-    this.panels.set(filePath, panel);
+    this.panels.set(key, panel);
     panel.onDidDispose(() => {
-      this.panels.delete(filePath);
+      this.panels.delete(key);
       routerDisposable.dispose();
     });
 
@@ -53,8 +63,9 @@ export class MergeEditorManager {
     );
   }
 
-  closeMergeEditor(filePath: string): void {
-    const panel = this.panels.get(filePath);
+  closeMergeEditor(repoId: string, filePath: string): void {
+    const key = this.panelKey(repoId, filePath);
+    const panel = this.panels.get(key);
     if (panel) {
       panel.dispose();
     }

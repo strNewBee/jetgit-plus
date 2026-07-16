@@ -10,7 +10,7 @@ export class ConflictsManager {
     private readonly messageRouter: MessageRouter,
   ) {}
 
-  openConflictsPanel(): void {
+  openConflictsPanel(repoId: string): void {
     if (this.panel) {
       this.panel.reveal();
       return;
@@ -31,6 +31,7 @@ export class ConflictsManager {
       panel.webview,
       this.extensionUri,
       "conflicts",
+      { "repo-id": repoId },
     );
 
     const routerDisposable = this.messageRouter.registerWebview(panel.webview);

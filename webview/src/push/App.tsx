@@ -5,7 +5,8 @@ import CodiconListTree from "~icons/codicon/list-tree";
 import { bridge } from "../shared/bridge";
 import { CommitInfo } from "../shared/components/CommitInfo";
 import { FileTree } from "../shared/components/FileTree";
-import type { Commit, DiffFile } from "../shared/types/git";
+import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
+import type { BranchInfo, Commit, DiffFile } from "../shared/types/git";
 import { RemoteBranchSelector } from "./components/RemoteBranchSelector";
 import { useDraggableDivider } from "./hooks/useDraggableDivider";
 import { formatRemoteBranchLabel } from "./utils/branchUtils";
@@ -68,8 +69,14 @@ function PushRejectedDialog({
 
 export function PushApp() {
   const root = document.getElementById("root");
-  const branchName = root?.dataset.branch ?? "";
-  const remoteName = root?.dataset.remote ?? "origin";
+  const initialBranch = root?.dataset.branch ?? "";
+  const initialRemote = root?.dataset.remote ?? "origin";
+
+  // branchName is now state so it can be reloaded when the active repo changes
+  // (via useOperationRepoBinding). It is seeded from the host-supplied dataset
+  // on first mount. The editable remote target (targetRemote) is derived from
+  // the current branch's upstream and updated alongside branchName.
+  const [branchName, setBranchName] = useState(initialBranch);
 
   const [commits, setCommits] = useState<Commit[]>([]);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
@@ -83,8 +90,8 @@ export function PushApp() {
   });
 
   // Editable remote branch target state
-  const [targetRemote, setTargetRemote] = useState(remoteName);
-  const [targetBranch, setTargetBranch] = useState(branchName);
+  const [targetRemote, setTargetRemote] = useState(initialRemote);
+  const [targetBranch, setTargetBranch] = useState(initialBranch);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"tree" | "flat">("tree");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -94,24 +101,99 @@ export function PushApp() {
   const { leftWidthPercent, isDragging, dividerProps } =
     useDraggableDivider(bodyRef);
 
-  useEffect(() => {
-    async function load() {
+  // Track pushing in a ref so the re-init event listener can read the latest
+  // value without re-subscribing on every render.
+  const pushingRef = useRef(pushing);
+  pushingRef.current = pushing;
+
+  const loadAheadCommits = useCallback(
+    async (branch: string, remote: string) => {
       try {
         const result = (await bridge.request("getAheadCommits", {
-          branchName,
-          remote: targetRemote,
+          branchName: branch,
+          remote,
         })) as { commits: Commit[] } | null;
         const list = result?.commits ?? [];
         setCommits(list);
         if (list.length > 0) {
           setSelectedHash(list[0].hash);
+        } else {
+          setSelectedHash(null);
         }
       } catch (err) {
         console.error("Failed to load ahead commits:", err);
       }
+    },
+    [],
+  );
+
+  // (Re)load repo-specific data: current branch, derived remote, ahead commits.
+  // Used for the initial mount (via the binding hook's effect-free initial path
+  // is NOT triggered — we explicitly load below) and whenever the active repo
+  // changes while idle.
+  const loadRepo = useCallback(async () => {
+    try {
+      const result = (await bridge.request("getBranches")) as
+        | BranchInfo[]
+        | { status: string }
+        | null;
+      if (!Array.isArray(result)) {
+        setBranchName("");
+        setTargetBranch("");
+        setTargetRemote("origin");
+        setCommits([]);
+        setSelectedHash(null);
+        setFiles([]);
+        return;
+      }
+      const current = result.find((b) => b.isCurrent);
+      const branch = current?.name ?? "";
+      const remote = current?.upstream?.split("/")[0] ?? "origin";
+      setBranchName(branch);
+      setTargetBranch(branch);
+      setTargetRemote(remote);
+      // Clear commit / file selection before reloading ahead commits.
+      setSelectedHash(null);
+      setFiles([]);
+      setCollapsed({});
+      await loadAheadCommits(branch, remote);
+    } catch (err) {
+      console.error("Failed to load repo for push panel:", err);
     }
-    load();
-  }, [branchName, targetRemote]);
+  }, [loadAheadCommits]);
+
+  // Idle-follow / execution-bound repo lifecycle: while a push is running,
+  // active-repo changes are deferred and only the latest is applied when idle.
+  useOperationRepoBinding(pushing, loadRepo);
+
+  // Initial load of ahead commits for the host-supplied branch/remote.
+  useEffect(() => {
+    if (!initialBranch) return;
+    loadAheadCommits(initialBranch, initialRemote);
+  }, [initialBranch, initialRemote, loadAheadCommits]);
+
+  // Listen for re-init events (when panel is reused). Ignored while a push is
+  // in progress so the in-flight operation is not disturbed.
+  useEffect(() => {
+    return bridge.onEvent((event, data) => {
+      if (event !== "pushPanelInit") return;
+      if (pushingRef.current) return;
+      const payload = data as {
+        branchName?: string;
+        remote?: string;
+        repoId?: string;
+      };
+      const branch = payload.branchName ?? "";
+      const remote = payload.remote ?? "origin";
+      setBranchName(branch);
+      setTargetBranch(branch);
+      setTargetRemote(remote);
+      setSelectedHash(null);
+      setFiles([]);
+      setCollapsed({});
+      void loadAheadCommits(branch, remote);
+    });
+  }, [loadAheadCommits]);
 
   useEffect(() => {
     if (!selectedHash) {
@@ -233,9 +315,15 @@ export function PushApp() {
     setSelectorOpen(false);
   }, []);
 
-  const handleRemoteSelect = useCallback((remote: string) => {
-    setTargetRemote(remote);
-  }, []);
+  const handleRemoteSelect = useCallback(
+    (remote: string) => {
+      setTargetRemote(remote);
+      // Reloading ahead commits against the newly chosen remote mirrors the
+      // previous effect that was keyed on [branchName, targetRemote].
+      void loadAheadCommits(targetBranch, remote);
+    },
+    [loadAheadCommits, targetBranch],
+  );
 
   const handleSelectorClose = useCallback(() => {
     setSelectorOpen(false);

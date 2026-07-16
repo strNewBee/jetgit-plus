@@ -6,6 +6,7 @@ import { MergeStandaloneApp } from "./conflicts/MergeStandaloneApp";
 import { PanelApp } from "./panel/App";
 import { PushApp } from "./push/App";
 import { RollbackApp } from "./rollback/App";
+import { bridge } from "./shared/bridge";
 import "./shared/theme/variables.css";
 
 // Fix Cmd+A/Ctrl+A not working in webview inputs (VS Code intercepts it)
@@ -29,6 +30,11 @@ const mode = root.dataset.mode as
   | "push"
   | "rollback"
   | undefined;
+
+// Initialize the bridge's repo context from the host-supplied data-repo-id
+// before React renders, so the first batch of requests target the right repo.
+const initialRepoId = root.dataset.repoId ?? null;
+if (initialRepoId) bridge.setRepoContext(initialRepoId);
 
 createRoot(root).render(
   <StrictMode>

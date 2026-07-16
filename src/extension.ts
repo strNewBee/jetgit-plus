@@ -153,7 +153,9 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "jetgit-plus.openMergeEditor",
       (file?: string) => {
-        mergeManager.openMergeEditor(file ?? "untitled");
+        const runtime = repoRegistry.getActive();
+        if (!runtime) return;
+        mergeManager.openMergeEditor(runtime.descriptor.id, file ?? "untitled");
       },
     ),
     vscode.commands.registerCommand(
@@ -194,7 +196,9 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand("jetgit-plus.openConflicts", () => {
-      conflictsManager.openConflictsPanel();
+      const runtime = repoRegistry.getActive();
+      if (!runtime) return;
+      conflictsManager.openConflictsPanel(runtime.descriptor.id);
     }),
     vscode.commands.registerCommand(
       "jetgit-plus.openMergeEditorFromSCM",
@@ -206,7 +210,9 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        mergeManager.openMergeEditor(filePath);
+        const runtime = repoRegistry.getActive();
+        if (!runtime) return;
+        mergeManager.openMergeEditor(runtime.descriptor.id, filePath);
       },
     ),
     vscode.commands.registerCommand(
@@ -288,9 +294,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // 6. Register command handlers to MessageRouter
   // If GitService is unavailable, handlers return { status: 'not_git_repo' }
 
-  messageRouter.handle("openMergeEditor", async (params) => {
+  messageRouter.handle("openMergeEditor", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const file = (params.file as string) ?? "untitled";
-    mergeManager.openMergeEditor(file);
+    mergeManager.openMergeEditor(ctx.repoId, file);
     return undefined;
   });
 
@@ -528,8 +535,9 @@ export async function activate(context: vscode.ExtensionContext) {
     return ctx.gitService.getConflictFiles();
   });
 
-  messageRouter.handle("openConflictsPanel", async () => {
-    await vscode.commands.executeCommand("jetgit-plus.openConflicts");
+  messageRouter.handle("openConflictsPanel", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    conflictsManager.openConflictsPanel(ctx.repoId);
     return { success: true };
   });
 
@@ -588,9 +596,10 @@ export async function activate(context: vscode.ExtensionContext) {
     return { confirmed: choice === "Discard" };
   });
 
-  messageRouter.handle("closeMergeEditor", async (params) => {
+  messageRouter.handle("closeMergeEditor", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
-    mergeManager.closeMergeEditor(filePath);
+    mergeManager.closeMergeEditor(ctx.repoId, filePath);
     return { success: true };
   });
 
@@ -819,9 +828,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── Rollback Panel Handlers ───────────────────────────────────────
 
-  messageRouter.handle("openRollbackPanel", async (params) => {
+  messageRouter.handle("openRollbackPanel", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const files = params.files as RollbackFileInfo[];
-    rollbackPanel.open(files);
+    rollbackPanel.open(ctx.repoId, files);
     return { success: true };
   });
 

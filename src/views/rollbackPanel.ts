@@ -20,16 +20,16 @@ export class RollbackPanel {
     private readonly messageRouter: MessageRouter,
   ) {}
 
-  open(files: RollbackFileInfo[]): void {
+  open(repoId: string, files: RollbackFileInfo[]): void {
     const filesJson = JSON.stringify(files);
 
     if (this.panel) {
       this.panel.reveal();
-      // Re-send init data with updated file list
+      // Re-send init data with updated file list and repo binding
       this.panel.webview.postMessage({
         type: "event",
         event: "rollbackPanelInit",
-        data: { files },
+        data: { repoId, files },
       });
       return;
     }
@@ -49,7 +49,7 @@ export class RollbackPanel {
       this.panel.webview,
       this.extensionUri,
       "rollback",
-      { files: filesJson },
+      { "repo-id": repoId, files: filesJson },
     );
 
     const routerDisposable = this.messageRouter.registerWebview(
