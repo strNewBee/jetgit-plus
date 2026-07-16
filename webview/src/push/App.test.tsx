@@ -266,3 +266,120 @@ describe("PushApp header repo label (Task 25)", () => {
     expect(document.querySelector(".push-repo-name")).toBeNull();
   });
 });
+
+/**
+ * F2 (P1): re-init during a rejected dialog + recovery repoId pinning.
+ *
+ * Bug: while repo A's push-rejected dialog was open, a pushPanelInit{repoId:"B"}
+ * (panel reuse) immediately rebound the hook to B. The recovery requests then
+ * fired through the now-B-bound `request`, targeting B instead of the rejected
+ * repo A.
+ *
+ * Fix: (A) the rejected context now captures repoId, and every recovery request
+ * passes it as an explicit override; (B) a re-init received while pushing OR
+ * while the rejected dialog is open is DEFERRED until the panel goes idle.
+ */
+describe("PushApp rejected-dialog re-init deferral (F2)", () => {
+  beforeEach(() => {
+    setRepoContext.mockReset();
+    request.mockClear();
+    onEvent.mockClear();
+    eventListener.current = null;
+    for (const k of Object.keys(responders)) delete responders[k];
+  });
+  afterEach(() => {
+    cleanup();
+    eventListener.current = null;
+  });
+
+  it("a pushPanelInit{repoId:'B'} during A's rejected dialog does NOT rebind, and recovery pins repoId 'A'", async () => {
+    seedRoot({
+      repoId: "A",
+      branch: "main",
+      remote: "origin",
+      repoName: "A-name",
+    });
+    // Supply a commit so the Push button is enabled.
+    responders.getAheadCommits = () => ({
+      commits: [{ hash: "h1", subject: "s", refs: [] }],
+    });
+    // executePush rejects with a non-fast-forward message so the dialog shows.
+    responders.executePush = () => {
+      throw new Error("![rejected] Would be an error");
+    };
+
+    render(<PushApp />);
+
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-split-main") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+
+    // Trigger the rejected push for repo A.
+    request.mockClear();
+    (document.querySelector(".push-split-main") as HTMLButtonElement).click();
+
+    // The rejected dialog must appear for A.
+    await waitFor(() => {
+      expect(document.querySelector(".push-rejected-dialog")).toBeTruthy();
+    });
+
+    // Sanity: header still reads A-name right after rejection.
+    expect(
+      (document.querySelector(".push-repo-name") as HTMLElement | null)
+        ?.textContent,
+    ).toBe("A-name");
+
+    // --- The race: panel reuse posts pushPanelInit{B} while A's dialog is open.
+    setRepoContext.mockClear();
+    request.mockClear();
+    emit("pushPanelInit", {
+      repoId: "B",
+      repoName: "B-name",
+      branchName: "feature",
+      remote: "up",
+    });
+
+    // The re-init MUST be deferred: no rebind to B while the dialog is open.
+    // Give the event a tick to (wrongly) process if it were going to.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setRepoContext).not.toHaveBeenCalledWith("B");
+    // Header still shows A (not B).
+    expect(
+      (document.querySelector(".push-repo-name") as HTMLElement | null)
+        ?.textContent,
+    ).toBe("A-name");
+    // No getAheadCommits for B leaked through (would indicate a rebind).
+    expect(lastCall("getAheadCommits")).toBeFalsy();
+
+    // --- Recovery: click "Rebase". Its requests must pin repoId "A".
+    responders.pullRebase = () => undefined;
+    responders.executePush = () => ({ data: {} });
+    (document.querySelector(".push-btn-rebase") as HTMLButtonElement).click();
+
+    await waitFor(() => {
+      expect(lastCall("pullRebase")).toBeTruthy();
+    });
+    expect(lastCall("pullRebase")?.[2]).toMatchObject({ repoId: "A" });
+
+    await waitFor(() => {
+      expect(lastCall("executePush")).toBeTruthy();
+    });
+    expect(lastCall("executePush")?.[2]).toMatchObject({ repoId: "A" });
+
+    // After recovery (dialog dismissed + push succeeded), the deferred B re-init
+    // applies: bindRepo("B") bumps the bridge context to B.
+    await waitFor(() => {
+      expect(setRepoContext).toHaveBeenCalledWith("B");
+    });
+    // And the header flips to B.
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-repo-name") as HTMLElement | null)
+          ?.textContent,
+      ).toBe("B-name");
+    });
+  });
+});

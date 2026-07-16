@@ -106,12 +106,36 @@ export function PushApp() {
   const pushingRef = useRef(pushing);
   pushingRef.current = pushing;
 
+  // Mirror pushRejected.show into a ref for the same reason: the re-init
+  // listener (subscribed once) must read the latest dialog-open state to decide
+  // whether to defer a panel re-init.
+  const pushRejectedShowRef = useRef(pushRejected.show);
+  pushRejectedShowRef.current = pushRejected.show;
+
+  // A panel re-init (pushPanelInit) received while the panel is busy — pushing
+  // OR while the rejected dialog is open — is stashed here and replayed once
+  // the panel goes idle. Only the newest payload wins (each stash overwrites).
+  // Replaying happens in the drain effect below, which calls the same
+  // `applyReInit` the listener uses. `undefined` = nothing pending.
+  const pendingReInitRef = useRef<
+    | {
+        repoId: string;
+        repoName?: string;
+        branchName?: string;
+        remote?: string;
+      }
+    | undefined
+  >(undefined);
+
   // Snapshot of the push context captured at the moment a push was rejected.
   // The recovery handlers (rebase/merge-and-push) use THESE captured values via
   // the bound `request` so they target the repo/branch that was rejected even
-  // if the active repo changed while the rejected dialog was open. `null` while
-  // no recovery is pending.
+  // if the active repo changed while the rejected dialog was open. `repoId` is
+  // captured too and passed as an explicit override on every recovery request,
+  // so recovery pins the rejected repo regardless of which repo the hook is
+  // currently bound to. `null` while no recovery is pending.
   const rejectedContextRef = useRef<{
+    repoId: string;
     branchName: string;
     targetRemote: string;
     targetBranch: string;
@@ -148,7 +172,7 @@ export function PushApp() {
   // to recover — otherwise switching the active repo mid-dialog would re-bind
   // the bridge away from the rejected repo before the recovery handler runs.
   // `busy = pushing || pushRejected.show`.
-  const { repoName, request, bindRepo } = useRepoBoundOperation(
+  const { repoId, repoName, request, bindRepo } = useRepoBoundOperation(
     pushing || pushRejected.show,
     onFollowRepo,
   );
@@ -218,25 +242,19 @@ export function PushApp() {
     loadAheadCommits(initialBranch, initialRemote);
   }, [initialBranch, initialRemote, loadAheadCommits]);
 
-  // Listen for re-init events (when panel is reused). Ignored while a push is
-  // in progress so the in-flight operation is not disturbed. This is the
-  // authoritative rebind path: bindRepo(payload.repoId) sets the panel's repo
-  // (and bumps the bridge context synchronously) so subsequent requests target
-  // the newly revealed repo, not whatever the ambient context was bound to.
-  useEffect(() => {
-    return bridge.onEvent((event, data) => {
-      if (event !== "pushPanelInit") return;
-      if (pushingRef.current) return;
-      const payload = data as {
-        branchName?: string;
-        remote?: string;
-        repoId?: string;
-        repoName?: string;
-      };
-      // Rebind to the host-supplied repo FIRST (bumps generation so any stale
-      // in-flight response from the previous repo is dropped), then apply the
-      // branch/remote and reload ahead commits through the bound request. The
-      // label travels through the hook so the header stays in lockstep.
+  // Apply a pushPanelInit payload: rebind to the host-supplied repo FIRST
+  // (bumps generation so any stale in-flight response from the previous repo
+  // is dropped), then apply the branch/remote and reload ahead commits through
+  // the bound request. The label travels through the hook so the header stays
+  // in lockstep. Shared by both the re-init listener and the drain effect so
+  // there is no drift between the two paths.
+  const applyReInit = useCallback(
+    (payload: {
+      repoId?: string;
+      repoName?: string;
+      branchName?: string;
+      remote?: string;
+    }) => {
       if (payload.repoId !== undefined) {
         bindRepo(payload.repoId, payload.repoName?.trim() ?? "");
       }
@@ -249,8 +267,52 @@ export function PushApp() {
       setFiles([]);
       setCollapsed({});
       void loadAheadCommits(branch, remote);
+    },
+    [bindRepo, loadAheadCommits],
+  );
+
+  // Listen for re-init events (when panel is reused). Deferred while the panel
+  // is busy — pushing OR while the rejected dialog is open — so a panel RE-USE
+  // cannot steal the binding away from a rejected repo mid-dialog. The newest
+  // payload is stashed in pendingReInitRef and replayed by the drain effect
+  // once the panel goes idle. This is the authoritative rebind path: it sets
+  // the panel's repo (and bumps the bridge context synchronously) so
+  // subsequent requests target the newly revealed repo, not whatever the
+  // ambient context was bound to.
+  useEffect(() => {
+    return bridge.onEvent((event, data) => {
+      if (event !== "pushPanelInit") return;
+      const payload = data as {
+        branchName?: string;
+        remote?: string;
+        repoId?: string;
+        repoName?: string;
+      };
+      if (pushingRef.current || pushRejectedShowRef.current) {
+        // Stash only the newest re-init payload (each overwrites). Must include
+        // repoId so applyReInit can rebind; keep the rest for branch/remote.
+        pendingReInitRef.current = {
+          repoId: payload.repoId ?? "",
+          repoName: payload.repoName,
+          branchName: payload.branchName,
+          remote: payload.remote,
+        };
+        return;
+      }
+      applyReInit(payload);
     });
-  }, [loadAheadCommits, bindRepo]);
+  }, [applyReInit]);
+
+  // Drain a deferred re-init once the panel is fully idle (not pushing AND the
+  // rejected dialog closed). Keyed on both busy flags so it fires exactly when
+  // the panel transitions back to idle while a re-init is pending.
+  useEffect(() => {
+    if (pushing || pushRejected.show) return;
+    const payload = pendingReInitRef.current;
+    if (payload === undefined) return;
+    pendingReInitRef.current = undefined;
+    applyReInit(payload);
+  }, [pushing, pushRejected.show, applyReInit]);
 
   useEffect(() => {
     if (!selectedHash) {
@@ -306,7 +368,11 @@ export function PushApp() {
           msg.includes("[rejected]") ||
           msg.includes("failed to push some refs")
         ) {
+          // Capture the hook's current repoId (the rejected repo, e.g. A) so the
+          // recovery handlers can pin it explicitly even if a panel re-init race
+          // rebinds the hook to another repo while the dialog is open.
           rejectedContextRef.current = {
+            repoId: repoId ?? "",
             branchName,
             targetRemote,
             targetBranch,
@@ -327,7 +393,7 @@ export function PushApp() {
         }
       }
     },
-    [branchName, targetRemote, targetBranch, commits.length, request],
+    [branchName, targetRemote, targetBranch, commits.length, repoId, request],
   );
 
   const handleRebaseAndPush = useCallback(async () => {
@@ -337,15 +403,26 @@ export function PushApp() {
     setError(null);
     setPushing(true);
     try {
-      await request("pullRebase", { branchName: ctx.branchName });
+      // Pin the captured repoId on EVERY recovery request so the recovery
+      // targets the rejected repo (A) regardless of which repo the hook is
+      // currently bound to (opts.repoId overrides the ambient ref).
+      await request(
+        "pullRebase",
+        { branchName: ctx.branchName },
+        { repoId: ctx.repoId },
+      );
       // After successful rebase, retry push using the CAPTURED target so the
       // recovery stays on the rejected repo/branch.
-      await request("executePush", {
-        branchName: ctx.branchName,
-        remote: ctx.targetRemote,
-        targetBranch: ctx.targetBranch,
-        force: false,
-      });
+      await request(
+        "executePush",
+        {
+          branchName: ctx.branchName,
+          remote: ctx.targetRemote,
+          targetBranch: ctx.targetBranch,
+          force: false,
+        },
+        { repoId: ctx.repoId },
+      );
       rejectedContextRef.current = null;
       setPushing(false);
       const message = `Rebased and pushed to ${ctx.targetRemote}/${ctx.targetBranch}`;
@@ -372,14 +449,23 @@ export function PushApp() {
     setError(null);
     setPushing(true);
     try {
-      await request("pullMerge", { branchName: ctx.branchName });
+      // Pin the captured repoId on EVERY recovery request (see handleRebaseAndPush).
+      await request(
+        "pullMerge",
+        { branchName: ctx.branchName },
+        { repoId: ctx.repoId },
+      );
       // After successful merge, retry push using the CAPTURED target.
-      await request("executePush", {
-        branchName: ctx.branchName,
-        remote: ctx.targetRemote,
-        targetBranch: ctx.targetBranch,
-        force: false,
-      });
+      await request(
+        "executePush",
+        {
+          branchName: ctx.branchName,
+          remote: ctx.targetRemote,
+          targetBranch: ctx.targetBranch,
+          force: false,
+        },
+        { repoId: ctx.repoId },
+      );
       rejectedContextRef.current = null;
       setPushing(false);
       const message = `Merged and pushed to ${ctx.targetRemote}/${ctx.targetBranch}`;
