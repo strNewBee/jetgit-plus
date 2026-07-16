@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import type { GitService } from "../git/gitService";
+import { JetGitError, JetGitErrorCode } from "../git/errors";
+import type { RepoRegistry } from "../git/repoRegistry";
 import type { DiffFile } from "../git/types";
 import { JETGIT_PLUS_SCHEME } from "./gitContentProvider";
 
@@ -7,19 +8,22 @@ export class DiffEditorManager {
   /** Current diff navigation state */
   private diffFiles: DiffFile[] = [];
   private diffCommit = "";
+  private diffRepoId = "";
   private diffIndex = -1;
   private diffBaseRef?: string;
   private diffCherryPickHashes?: string[];
 
-  constructor(private readonly gitService: GitService) {}
+  constructor(private readonly registry: RepoRegistry) {}
 
   /** Set the file list for diff navigation */
   setDiffFileList(
+    repoId: string,
     files: DiffFile[],
     commit: string,
     baseRef?: string,
     cherryPickHashes?: string[],
   ): void {
+    this.diffRepoId = repoId;
     this.diffFiles = files;
     this.diffCommit = commit;
     this.diffBaseRef = baseRef;
@@ -74,6 +78,7 @@ export class DiffEditorManager {
     );
 
     await this.openDiffEditor(
+      this.diffRepoId,
       this.diffCommit,
       filePath,
       file,
@@ -83,12 +88,22 @@ export class DiffEditorManager {
   }
 
   async openDiffEditor(
+    repoId: string,
     commit: string,
     filePath: string,
     fileMeta?: DiffFile,
     baseRef?: string,
     cherryPickHashes?: string[],
   ): Promise<void> {
+    const runtime = this.registry.get(repoId);
+    if (!runtime) {
+      throw new JetGitError(
+        JetGitErrorCode.REPO_NOT_FOUND,
+        `Repository not available: ${repoId}`,
+      );
+    }
+    const gitService = runtime.gitService;
+
     const status = fileMeta?.status ?? "modified";
     const oldPath = fileMeta?.oldPath ?? filePath;
     const newPath = fileMeta?.newPath ?? filePath;
@@ -98,22 +113,22 @@ export class DiffEditorManager {
     let rightRef: string = commit;
 
     if (cherryPickHashes && cherryPickHashes.length > 1) {
-      const range = await this.gitService.findFileRange(
+      const range = await gitService.findFileRange(
         cherryPickHashes,
         newPath || oldPath,
       );
       if (range) {
         rightRef = range.newest;
-        const parents = await this.gitService.getCommitParents(range.oldest);
+        const parents = await gitService.getCommitParents(range.oldest);
         leftRef = parents[0] ?? "";
       } else {
-        const parents = await this.gitService.getCommitParents(commit);
+        const parents = await gitService.getCommitParents(commit);
         leftRef = parents[0] ?? "";
       }
     } else if (baseRef) {
       leftRef = baseRef;
     } else {
-      const parents = await this.gitService.getCommitParents(commit);
+      const parents = await gitService.getCommitParents(commit);
       leftRef = parents[0] ?? "";
     }
 
@@ -124,35 +139,35 @@ export class DiffEditorManager {
     switch (status) {
       case "added":
         leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=empty`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=empty&repo=${encodeURIComponent(repoId)}`,
         );
         rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
         );
         break;
       case "deleted":
         leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
         );
         rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=empty`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=empty&repo=${encodeURIComponent(repoId)}`,
         );
         break;
       case "renamed":
       case "copied":
         leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
         );
         rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
         );
         break;
       default: // modified
         leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${leftRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
         );
         rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}`,
+          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
         );
         break;
     }

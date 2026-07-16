@@ -85,13 +85,14 @@ export async function activate(context: vscode.ExtensionContext) {
     };
   });
 
-  // diffManager / contentProvider are constructed from the active runtime.
-  // Task 6/7 rebind these per-repo; for now they stay module-level so native
+  // diffManager / contentProvider are repo-aware via the registry.
+  // They resolve the originating repo from the diff URI's ?repo= param
+  // (or the active repo for legacy URIs) and stay module-level so native
   // commands (nextDiff/prevDiff/openDiffEditor) and the diff handler can use them.
   const activeRuntime = repoRegistry.getActive();
   if (activeRuntime) {
     // Register virtual document provider for git file content
-    const contentProvider = new GitContentProvider(activeRuntime.gitService);
+    const contentProvider = new GitContentProvider(repoRegistry);
     contentProvider.setExternalContentMap(shelfDiffContent);
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(
@@ -105,7 +106,7 @@ export async function activate(context: vscode.ExtensionContext) {
       ),
     );
 
-    diffManager = new DiffEditorManager(activeRuntime.gitService);
+    diffManager = new DiffEditorManager(repoRegistry);
   }
 
   // 2c. CommitViewProvider (always registered)
@@ -159,7 +160,9 @@ export async function activate(context: vscode.ExtensionContext) {
       "jetgit-plus.openDiffEditor",
       (commit?: string, filePath?: string) => {
         if (commit && filePath && diffManager) {
-          diffManager.openDiffEditor(commit, filePath);
+          const runtime = repoRegistry.getActive();
+          if (!runtime) return;
+          diffManager.openDiffEditor(runtime.descriptor.id, commit, filePath);
         }
       },
     ),
@@ -314,6 +317,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Set file list for next/prev navigation
       if (fileList && fileList.length > 0) {
         diffManager.setDiffFileList(
+          ctx.repoId,
           fileList,
           commit,
           baseRef,
@@ -329,6 +333,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       await diffManager.openDiffEditor(
+        ctx.repoId,
         commit,
         filePath,
         fileMeta,

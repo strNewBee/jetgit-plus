@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
+import type { RepoRegistry } from "../git/repoRegistry";
 
 export const JETGIT_PLUS_SCHEME = "jetgit-plus";
 
@@ -20,10 +21,23 @@ export class GitContentProvider
   >();
   readonly onDidChangeFile = this._onDidChangeFile.event;
 
-  constructor(private readonly gitService: GitService) {}
+  constructor(private readonly registry: RepoRegistry) {}
 
   setExternalContentMap(map: Map<string, string>): void {
     this.externalContent = map;
+  }
+
+  /**
+   * Resolve the GitService for a given URI. Reads the `?repo=` query param;
+   * if present, looks up that repo explicitly. Otherwise (legacy URIs without
+   * a repo param) falls back to the active repo.
+   */
+  private resolveGitService(uri: vscode.Uri): GitService | null {
+    const repoId = new URLSearchParams(uri.query).get("repo");
+    if (repoId) {
+      return this.registry.get(repoId)?.gitService ?? null;
+    }
+    return this.registry.getActive()?.gitService ?? null; // legacy URI only
   }
 
   // ─── TextDocumentContentProvider ──────────────────────────────────
@@ -42,7 +56,9 @@ export class GitContentProvider
     if (!ref || !filePath) {
       return "";
     }
-    return this.gitService.getFileContent(ref, filePath);
+    const svc = this.resolveGitService(uri);
+    if (!svc) return "";
+    return svc.getFileContent(ref, filePath);
   }
 
   // ─── FileSystemProvider (for binary files) ────────────────────────
@@ -72,7 +88,9 @@ export class GitContentProvider
     if (!ref || !filePath) {
       return new Uint8Array(0);
     }
-    const buffer = await this.gitService.getFileContentBuffer(ref, filePath);
+    const svc = this.resolveGitService(uri);
+    if (!svc) return new Uint8Array(0);
+    const buffer = await svc.getFileContentBuffer(ref, filePath);
     return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   }
 
