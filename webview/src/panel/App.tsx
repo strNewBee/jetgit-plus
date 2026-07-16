@@ -93,8 +93,18 @@ export function PanelApp() {
       if (bootstrapping) return;
       if (s.activeRepoId !== lastRepo) {
         lastRepo = s.activeRepoId;
-        if (!disposed && lastRepo)
-          void usePanelStore.getState().fetchInitialData();
+        if (!disposed) {
+          if (lastRepo) {
+            // Reset repo-scoped filter (branch/file) so the new repo's Git Log
+            // isn't silently scoped to the old repo's branch/path; carryover
+            // filters (search/author/date) are preserved by resetForRepoSwitch.
+            usePanelStore.getState().resetForRepoSwitch();
+            void usePanelStore.getState().fetchInitialData();
+          } else {
+            // No active repo (all removed / none): clear stale repo-bound data.
+            usePanelStore.getState().clearForNoRepo();
+          }
+        }
       }
     });
     void (async () => {

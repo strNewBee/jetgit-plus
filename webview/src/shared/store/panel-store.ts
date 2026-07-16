@@ -76,6 +76,23 @@ interface PanelStore {
   toggleSequenceCollapse: (sequenceId: string, intermediates: string[]) => void;
   toggleBranchGroupByDirectory: () => void;
   refresh: () => Promise<void>;
+  /**
+   * Reset the repo-SCOPED parts of `filter` (`branch`, `file`) before fetching
+   * for a newly-active repo, WITHOUT touching the carryover (global-scope)
+   * fields `searchQuery`/`author`/`dateRange`. Also drops collapse/selection
+   * state that was tied to the previous repo's commit graph. Call this from the
+   * active-repo switch site BEFORE `fetchInitialData()` so the new repo's Git
+   * Log isn't silently scoped to the old repo's branch/path.
+   */
+  resetForRepoSwitch: () => void;
+  /**
+   * Clear all repo-bound display data (`commits`, `branches`, `tags`, graph,
+   * selection, commit files) AND the repo-scoped filter fields, leaving the
+   * panel empty. Used when `activeRepoId` becomes `null` (no repos / all
+   * removed) so no stale data from a gone repo lingers. Carryover filter fields
+   * are preserved (they are not repo-bound).
+   */
+  clearForNoRepo: () => void;
 }
 
 interface SelectionSnapshot {
@@ -633,6 +650,61 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   async refresh() {
     set({ collapsedSequenceIds: new Set(), collapsedIntermediates: new Map() });
     await get().fetchInitialData();
+  },
+
+  resetForRepoSwitch() {
+    const { filter } = get();
+    // Only `branch` and `file` are repo-scoped (they scope the backend Git Log
+    // query to a specific repo's refs/paths). searchQuery/author/dateRange are
+    // client-side filters over already-fetched commits and may legitimately
+    // carry across repos. Also clear collapse state (tied to the old graph) and
+    // the pending-selection restore buffer (its hashes belong to the old repo).
+    set({
+      filter: {
+        searchQuery: filter.searchQuery,
+        branch: "",
+        author: filter.author,
+        dateRange: filter.dateRange,
+        file: "",
+      },
+      collapsedSequenceIds: new Set(),
+      collapsedIntermediates: new Map(),
+      pendingSelectionFromFilter: [],
+    });
+  },
+
+  clearForNoRepo() {
+    const { filter } = get();
+    // Wipe repo-bound display data + repo-scoped filter fields; keep carryover
+    // (search/author/date) since they are not repo-bound and a future repo may
+    // reasonably reuse them.
+    set({
+      commits: [],
+      visibleCommits: [],
+      branches: [],
+      tags: [],
+      currentBranch: "",
+      graphLayout: {},
+      laneSnapshot: null,
+      selectedCommitHash: null,
+      selectedCommitHashes: [],
+      lastSelectedCommitHash: null,
+      commitFiles: [],
+      selectedFilePath: null,
+      rangeOldest: null,
+      rangeNewest: null,
+      filter: {
+        searchQuery: filter.searchQuery,
+        branch: "",
+        author: filter.author,
+        dateRange: filter.dateRange,
+        file: "",
+      },
+      collapsedSequenceIds: new Set(),
+      collapsedIntermediates: new Map(),
+      pendingSelectionFromFilter: [],
+      hasMore: true,
+    });
   },
 }));
 

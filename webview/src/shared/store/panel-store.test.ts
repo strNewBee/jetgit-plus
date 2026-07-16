@@ -167,3 +167,169 @@ describe("panel-store client-side operation markers (bridgeWithProgress)", () =>
     expect(usePanelStore.getState().operationInProgress).toBe(false);
   });
 });
+
+describe("panel-store resetForRepoSwitch", () => {
+  beforeEach(() => {
+    usePanelStore.setState({
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      commits: [],
+      branches: [],
+      tags: [],
+      collapsedSequenceIds: new Set(),
+      collapsedIntermediates: new Map(),
+      pendingSelectionFromFilter: [],
+    });
+  });
+
+  it("clears repo-scoped branch/file but preserves carryover search/author/date", () => {
+    usePanelStore.setState({
+      filter: {
+        searchQuery: "fix",
+        branch: "feature",
+        author: "alice",
+        dateRange: "7days",
+        file: "src/a.ts",
+      },
+    });
+    usePanelStore.getState().resetForRepoSwitch();
+    const { filter } = usePanelStore.getState();
+    expect(filter.branch).toBe(""); // repo-scoped → reset
+    expect(filter.file).toBe(""); // repo-scoped → reset
+    // carryover (global-scope) fields preserved
+    expect(filter.searchQuery).toBe("fix");
+    expect(filter.author).toBe("alice");
+    expect(filter.dateRange).toBe("7days");
+  });
+
+  it("clears collapse + pending-selection state tied to the old repo's graph", () => {
+    usePanelStore.setState({
+      collapsedSequenceIds: new Set(["seq1"]),
+      collapsedIntermediates: new Map([["seq1", ["h1"]]]),
+      pendingSelectionFromFilter: ["abc", "def"],
+    });
+    usePanelStore.getState().resetForRepoSwitch();
+    const s = usePanelStore.getState();
+    expect(s.collapsedSequenceIds.size).toBe(0);
+    expect(s.collapsedIntermediates.size).toBe(0);
+    expect(s.pendingSelectionFromFilter).toEqual([]);
+  });
+
+  it("after reset, fetchInitialData does NOT carry the old repo's branch/file into getGraphData", async () => {
+    const { bridge } = await import("../bridge");
+    const mockedRequest = vi.mocked(bridge.request);
+    mockedRequest.mockReset();
+    // Seed the store as if the user had filtered repo A by branch + file.
+    usePanelStore.setState({
+      filter: {
+        searchQuery: "bug",
+        branch: "feature-a",
+        author: "bob",
+        dateRange: "30days",
+        file: "src/a.ts",
+      },
+      commits: [],
+    });
+    // Resolve all bridge requests with empty-ish payloads so fetchInitialData
+    // completes without throwing.
+    mockedRequest.mockImplementation(async (cmd: string) => {
+      if (cmd === "getGraphData") {
+        return {
+          graphData: { commits: [], lanes: {} },
+          snapshot: { lanes: [], commitLanes: {} },
+        };
+      }
+      if (cmd === "getBranches") return [];
+      if (cmd === "getTags") return [];
+      return null;
+    });
+
+    // Simulate the App switch handler: reset THEN fetch.
+    usePanelStore.getState().resetForRepoSwitch();
+    await usePanelStore.getState().fetchInitialData();
+
+    // Find the getGraphData call and inspect its params.
+    const graphCall = mockedRequest.mock.calls.find(
+      (c) => c[0] === "getGraphData",
+    );
+    expect(graphCall).toBeTruthy();
+    const params = (graphCall?.[1] ?? {}) as {
+      branch?: string;
+      file?: string;
+    };
+    expect(params.branch).toBeUndefined(); // old repo's branch NOT carried
+    expect(params.file).toBeUndefined(); // old repo's file NOT carried
+  });
+});
+
+describe("panel-store clearForNoRepo", () => {
+  beforeEach(() => {
+    usePanelStore.setState({
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      commits: [],
+      branches: [],
+      tags: [],
+      currentBranch: "",
+      graphLayout: {},
+      laneSnapshot: null,
+      selectedCommitHash: null,
+      selectedCommitHashes: [],
+      commitFiles: [],
+      visibleCommits: [],
+    });
+  });
+
+  it("clears commits/branches/tags and repo-scoped filter when activeRepoId becomes null", () => {
+    // Seed stale repo-A data.
+    usePanelStore.setState({
+      commits: [{ hash: "a1" } as never],
+      visibleCommits: [{ hash: "a1" } as never],
+      branches: [{ name: "main", isCurrent: true } as never],
+      tags: [{ name: "v1" } as never],
+      currentBranch: "main",
+      graphLayout: { x: {} },
+      selectedCommitHash: "a1",
+      selectedCommitHashes: ["a1"],
+      commitFiles: [{} as never],
+      filter: {
+        searchQuery: "keep",
+        branch: "feature",
+        author: "carol",
+        dateRange: "today",
+        file: "src/a.ts",
+      },
+    });
+
+    usePanelStore.getState().clearForNoRepo();
+    const s = usePanelStore.getState();
+
+    // repo-bound display data cleared
+    expect(s.commits).toEqual([]);
+    expect(s.visibleCommits).toEqual([]);
+    expect(s.branches).toEqual([]);
+    expect(s.tags).toEqual([]);
+    expect(s.currentBranch).toBe("");
+    expect(s.graphLayout).toEqual({});
+    expect(s.selectedCommitHash).toBeNull();
+    expect(s.selectedCommitHashes).toEqual([]);
+    expect(s.commitFiles).toEqual([]);
+
+    // repo-scoped filter cleared, carryover preserved
+    expect(s.filter.branch).toBe("");
+    expect(s.filter.file).toBe("");
+    expect(s.filter.searchQuery).toBe("keep");
+    expect(s.filter.author).toBe("carol");
+    expect(s.filter.dateRange).toBe("today");
+  });
+});
