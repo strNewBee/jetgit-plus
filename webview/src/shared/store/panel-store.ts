@@ -682,8 +682,9 @@ export function _resetOperationProgressForTests(): void {
 /**
  * Mark a client-side operation (one issued via `bridgeWithProgress`) as
  * in-flight for `repoId`. Client-side ops that are NOT host-wrapped in
- * `withProgress` (e.g. createBranch, deleteBranch, checkoutCommit,
- * revertFileChanges) would otherwise never surface a busy state, because the
+ * `withProgress` (createBranch, deleteBranch, checkoutCommit,
+ * revertFileChanges, cherryPickFileChanges) would otherwise never surface a
+ * busy state, because the
  * host never broadcasts operationStart/End for them. Routing the marker through
  * the same per-repo count keeps the per-active-repo filter correct: the op only
  * disables the UI when it targets the visible repo, and concurrent ops on the
@@ -734,8 +735,38 @@ bridge.onEvent((event, data) => {
       recomputeOperationInProgress();
     }
   }
-  if (event === "activeRepoChanged") {
-    // Re-derive busy for the newly-active repo so an in-flight op on it shows.
-    recomputeOperationInProgress();
-  }
+  // NOTE: activeRepoChanged is intentionally NOT handled here. The active-repo
+  // busy recompute is driven by the useRepoStore subscription below, which fires
+  // AFTER repo-store has updated activeRepoId. Handling it here as well would be
+  // registration-order-dependent (panel-store's bridge handler registers at
+  // import time, before repo-store's, so it would read a STALE activeRepoId) —
+  // see the I1 fix in this file's history.
 });
+
+// Recompute `operationInProgress` when `activeRepoId` changes IN THE STORE.
+//
+// This is order-independent: repo-store's `activeRepoChanged`/`select`/
+// `reposChanged` handlers call `useRepoStore.setState({ activeRepoId })`, and
+// this subscription fires on that change regardless of which bridge handler ran
+// first. Previously the recompute was triggered inside the `activeRepoChanged`
+// bridge-event handler, but panel-store registers that handler at module-import
+// time while repo-store registers its handler later (in a useEffect), so
+// panel-store ran first and read a STALE activeRepoId — leaving busy wrong on
+// the immediate post-switch frame (it self-healed on the next op event, but
+// violated the invariant). Reading the change off the store fixes it.
+//
+// Idempotent: the subscription is created once at module load. Zustand's
+// `subscribe` returns an unsubscribe we retain for completeness but never call
+// (the store lives for the page lifetime). No loop risk: recompute only calls
+// `usePanelStore.setState`, never `useRepoStore.setState`.
+let activeRepoSubscriptionInstalled = false;
+function installActiveRepoSubscription(): void {
+  if (activeRepoSubscriptionInstalled) return;
+  activeRepoSubscriptionInstalled = true;
+  useRepoStore.subscribe((state, prevState) => {
+    if (state.activeRepoId !== prevState.activeRepoId) {
+      recomputeOperationInProgress();
+    }
+  });
+}
+installActiveRepoSubscription();

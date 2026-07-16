@@ -67,22 +67,34 @@ describe("panel-store operationInProgress per-repo filter", () => {
     expect(usePanelStore.getState().operationInProgress).toBe(false);
   });
 
-  it("switching to a repo with an in-flight op re-derives busy=true", () => {
+  it("switching to a repo with an in-flight op re-derives busy=true (I1: order-independent)", () => {
+    // Reproduce the REAL multi-store flow: repo-store's `activeRepoChanged`
+    // bridge handler is registered LATER (in a useEffect) than panel-store's,
+    // so on the event panel-store runs first and reads a STALE activeRepoId.
+    // repo-store then updates activeRepoId AFTER. The fix makes panel-store
+    // recompute on the activeRepoId STORE change, not on the bridge event, so
+    // it is correct regardless of handler registration order.
+    //
+    // This test does NOT pre-set activeRepoId before the switch the way the
+    // old test did. It drives the switch the way repo-store actually does:
+    // setState({ activeRepoId }) — the bridge event is a red herring for the
+    // recompute trigger.
     useRepoStore.setState({ activeRepoId: "A" });
     emit("operationStart", { repoId: "B" }); // B op starts while A visible
     expect(usePanelStore.getState().operationInProgress).toBe(false);
-    // User switches to B — the in-flight B op should now show as in-progress.
+    // User switches to B. repo-store's handler (which would also run here) does
+    // setState({ activeRepoId: "B" }) — with the subscribe-based fix this store
+    // change triggers the recompute, surfacing B's in-flight op.
     useRepoStore.setState({ activeRepoId: "B" });
-    emit("activeRepoChanged", { repo: { id: "B" } });
     expect(usePanelStore.getState().operationInProgress).toBe(true);
   });
 
-  it("switching away from a busy repo clears busy when the new repo has no op", () => {
+  it("switching away from a busy repo clears busy when the new repo has no op (I1)", () => {
     useRepoStore.setState({ activeRepoId: "A" });
     emit("operationStart", { repoId: "A" });
     expect(usePanelStore.getState().operationInProgress).toBe(true);
+    // Switch via the store change (not the bridge event) — see I1 test above.
     useRepoStore.setState({ activeRepoId: "B" });
-    emit("activeRepoChanged", { repo: { id: "B" } });
     expect(usePanelStore.getState().operationInProgress).toBe(false);
   });
 
@@ -99,8 +111,8 @@ describe("panel-store operationInProgress per-repo filter", () => {
     expect(usePanelStore.getState().operationInProgress).toBe(true); // A in flight
     emit("operationEnd", { repoId: "A" });
     expect(usePanelStore.getState().operationInProgress).toBe(false); // only B left
+    // Switch via the store change (see I1 test) — B is still in flight.
     useRepoStore.setState({ activeRepoId: "B" });
-    emit("activeRepoChanged", { repo: { id: "B" } });
     expect(usePanelStore.getState().operationInProgress).toBe(true); // B in flight
   });
 });
@@ -122,9 +134,9 @@ describe("panel-store client-side operation markers (bridgeWithProgress)", () =>
     useRepoStore.setState({ activeRepoId: "A" });
     _beginClientOperation("B");
     expect(usePanelStore.getState().operationInProgress).toBe(false);
-    // the marker is tracked, so switching to B re-derives busy (without re-adding)
+    // the marker is tracked, so switching to B re-derives busy (via the store
+    // change — see I1 test)
     useRepoStore.setState({ activeRepoId: "B" });
-    emit("activeRepoChanged", { repo: { id: "B" } });
     expect(usePanelStore.getState().operationInProgress).toBe(true);
   });
 
