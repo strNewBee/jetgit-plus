@@ -3,7 +3,12 @@ import * as vscode from "vscode";
 import { JetGitError, JetGitErrorCode } from "./git/errors";
 import { GitService } from "./git/gitService";
 import { discoverRepos } from "./git/repoDiscovery";
-import { RepoRegistry } from "./git/repoRegistry";
+import { type DiscoveredRepo, RepoRegistry } from "./git/repoRegistry";
+import {
+  FolderReconciler,
+  RepoSelectionCoordinator,
+  RepoSelectionError,
+} from "./git/repoSelection";
 import type { DiffFile, LaneSnapshot } from "./git/types";
 import { MessageRouter } from "./messages/messageRouter";
 import { ErrorCode } from "./messages/protocol";
@@ -1804,20 +1809,31 @@ export async function activate(context: vscode.ExtensionContext) {
     activeId: repoRegistry.getActiveId(),
   }));
 
+  // Task 24 (P2#6): serialize concurrent selects via a promise-chain mutex so
+  // the broadcast always reflects the truly-active repo. The coordinator
+  // re-reads the active id from the registry (source of truth) and persists
+  // BEFORE broadcasting, eliminating the setActive/persist/broadcast interleave
+  // window that let a stale broadcast land last.
+  const selectionCoordinator = new RepoSelectionCoordinator(
+    repoRegistry,
+    (activeId) =>
+      context.workspaceState.update("jetgit.activeRepoId", activeId),
+    (repo) => messageRouter.broadcastEvent("activeRepoChanged", { repo }),
+  );
+
   messageRouter.handle("selectRepo", async (params) => {
     const repoId = params.repoId as string;
-    if (!repoRegistry.setActive(repoId)) {
-      throw new JetGitError(
-        JetGitErrorCode.REPO_NOT_FOUND,
-        `Repository not available: ${repoId}`,
-      );
+    try {
+      const { activeId } = await selectionCoordinator.select(repoId);
+      return { ok: true as const, activeId };
+    } catch (err) {
+      // A queued select whose repo was removed by a concurrent folder
+      // reconciliation. Surface the same REPO_NOT_FOUND the old handler did.
+      if (err instanceof RepoSelectionError) {
+        throw new JetGitError(JetGitErrorCode.REPO_NOT_FOUND, err.message);
+      }
+      throw err;
     }
-    await context.workspaceState.update("jetgit.activeRepoId", repoId);
-    const runtime = repoRegistry.get(repoId);
-    if (!runtime) return { ok: false as const, activeId: repoId };
-    const repo = runtime.descriptor;
-    messageRouter.broadcastEvent("activeRepoChanged", { repo });
-    return { ok: true as const, activeId: repoId };
   });
 
   const broadcastRepos = () =>
@@ -1825,38 +1841,6 @@ export async function activate(context: vscode.ExtensionContext) {
       repos: repoRegistry.list(),
       activeId: repoRegistry.getActiveId(),
     });
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(async () => {
-      const foldersNow = (vscode.workspace.workspaceFolders ?? []).map((f) => ({
-        fsPath: f.uri.fsPath,
-        name: f.name,
-      }));
-      const previousActiveId = repoRegistry.getActiveId();
-      const fresh = await discoverRepos(foldersNow);
-      const nextIds = new Set(fresh.map((d) => d.descriptor.id));
-      for (const old of repoRegistry.list()) {
-        if (!nextIds.has(old.id)) {
-          repoRegistry.remove(old.id); // Task 6 also disposes its watcher
-        }
-      }
-      for (const d of fresh) {
-        if (!repoRegistry.get(d.descriptor.id)) {
-          repoRegistry.add(d, new GitService(d.paths));
-        }
-      }
-      registerRepoWatchers(); // create/dispose watchers to match registry state
-      broadcastRepos();
-      const activeId = repoRegistry.getActiveId();
-      await context.workspaceState.update("jetgit.activeRepoId", activeId);
-      if (activeId !== previousActiveId) {
-        const repo = activeId
-          ? (repoRegistry.get(activeId)?.descriptor ?? null)
-          : null;
-        messageRouter.broadcastEvent("activeRepoChanged", { repo });
-      }
-    }),
-  );
 
   // 7. GitWatcher — one per registered repo, disposed on removal.
   const watchers = new Map<string, GitWatcher>(); // repoId → watcher
@@ -1883,6 +1867,53 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   };
   registerRepoWatchers();
+
+  // Task 24 (P2#9): reconcile workspace-folder changes through a single
+  // serialized discovery so a slow earlier discoverRepos cannot complete after
+  // a later one and resurrect a repo the later change removed. The reconciler
+  // guarantees at most one discovery in flight, plus one follow-up pass with
+  // the latest folders if a change arrives mid-flight.
+  const applyDiscovered = (fresh: DiscoveredRepo[]) => {
+    const nextIds = new Set(fresh.map((d) => d.descriptor.id));
+    for (const old of repoRegistry.list()) {
+      if (!nextIds.has(old.id)) {
+        repoRegistry.remove(old.id); // disposes its watcher below
+      }
+    }
+    for (const d of fresh) {
+      if (!repoRegistry.get(d.descriptor.id)) {
+        repoRegistry.add(d, new GitService(d.paths));
+      }
+    }
+    registerRepoWatchers(); // create/dispose watchers to match registry state
+    broadcastRepos();
+  };
+  const folderReconciler = new FolderReconciler(discoverRepos, applyDiscovered);
+
+  const reconcileFolders = async (
+    folders: Array<{ fsPath: string; name: string }>,
+  ) => {
+    const previousActiveId = repoRegistry.getActiveId();
+    await folderReconciler.reconcile(folders);
+    const activeId = repoRegistry.getActiveId();
+    await context.workspaceState.update("jetgit.activeRepoId", activeId);
+    if (activeId !== previousActiveId) {
+      const repo = activeId
+        ? (repoRegistry.get(activeId)?.descriptor ?? null)
+        : null;
+      messageRouter.broadcastEvent("activeRepoChanged", { repo });
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      const foldersNow = (vscode.workspace.workspaceFolders ?? []).map((f) => ({
+        fsPath: f.uri.fsPath,
+        name: f.name,
+      }));
+      void reconcileFolders(foldersNow);
+    }),
+  );
 
   // 8. Status bar item to quickly open the panel
   const statusBarItem = vscode.window.createStatusBarItem(

@@ -53,7 +53,20 @@ export function ConflictsApp() {
   // follow-path via the ref, so `loadData` can be defined AFTER the hook (and
   // thus use its `request`).
   const onFollowRef = useRef<(() => Promise<void>) | null>(null);
-  const onFollowRepo = useCallback((_repoId: string | null) => {
+  const onFollowRepo = useCallback((repoId: string | null) => {
+    // Task 24 (P2#10): when every repo is removed, the host broadcasts
+    // activeRepoChanged{repo:null}. Don't issue a repo-bound request (there is
+    // no repo to bind to); clear the displayed state instead. Otherwise the
+    // bound `request` would carry repoId=undefined and the host's strict-repo
+    // guard would reject it as REPO_NOT_FOUND.
+    if (repoId === null) {
+      setMergeState(null);
+      setConflictFiles([]);
+      setSelectedFiles([]);
+      setLastSelectedFile(null);
+      setLoading(false);
+      return;
+    }
     // Delegate to the latest follow-path; no-op if it hasn't been assigned yet.
     // The repoId is ignored here because the bound `request` already carries
     // the authoritative repo (the hook bumped bridge context before calling).
