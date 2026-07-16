@@ -48,21 +48,8 @@ import type { RepositoryPaths } from "./repoRegistry";
 
 export class GitService {
   readonly cache = new GitCache();
-  readonly paths: RepositoryPaths;
 
-  constructor(paths: RepositoryPaths);
-  /** Migration-only overload removed in Task 4 after extension wiring uses discovery. */
-  constructor(rootPath: string);
-  constructor(pathsOrRoot: RepositoryPaths | string) {
-    this.paths =
-      typeof pathsOrRoot === "string"
-        ? {
-            workTreeRoot: pathsOrRoot,
-            gitDir: path.join(pathsOrRoot, ".git"),
-            commonDir: path.join(pathsOrRoot, ".git"),
-          }
-        : pathsOrRoot;
-  }
+  constructor(readonly paths: RepositoryPaths) {}
 
   get rootPath(): string {
     return this.paths.workTreeRoot;
