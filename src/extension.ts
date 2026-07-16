@@ -12,6 +12,7 @@ import {
   FolderReconciler,
   RepoSelectionCoordinator,
   RepoSelectionError,
+  Serializer,
 } from "./git/repoSelection";
 import type { DiffFile, LaneSnapshot } from "./git/types";
 import { MessageRouter } from "./messages/messageRouter";
@@ -1836,16 +1837,23 @@ export async function activate(context: vscode.ExtensionContext) {
     messageRouter.broadcastEvent("activeRepoChanged", { repo, repoName });
   };
 
-  // Task 24 (P2#6): serialize concurrent selects via a promise-chain mutex so
-  // the broadcast always reflects the truly-active repo. The coordinator
-  // re-reads the active id from the registry (source of truth) and persists
-  // BEFORE broadcasting, eliminating the setActive/persist/broadcast interleave
-  // window that let a stale broadcast land last.
+  // Task 24 (P2#6) + Fix-5 (F5): serialize concurrent selects via a
+  // promise-chain mutex so the broadcast always reflects the truly-active repo.
+  // The coordinator re-reads the active id from the registry (source of truth)
+  // and persists BEFORE broadcasting, eliminating the setActive/persist/broadcast
+  // interleave window that let a stale broadcast land last.
+  //
+  // Fix-5 (F5): the SAME serializer is shared with folderReconciler below, so a
+  // `select` and a folder-reconciliation pass can NEVER interleave — closing
+  // the three-way-split window (registry=A, response=B, broadcast=null) that
+  // existed when each had its own private promise-chain.
+  const selectionSerializer = new Serializer();
   const selectionCoordinator = new RepoSelectionCoordinator(
     repoRegistry,
     (activeId) =>
       context.workspaceState.update("jetgit.activeRepoId", activeId),
     (repo) => broadcastActiveRepoChanged(repo),
+    selectionSerializer,
   );
 
   messageRouter.handle("selectRepo", async (params) => {
@@ -1915,7 +1923,11 @@ export async function activate(context: vscode.ExtensionContext) {
     registerRepoWatchers(); // create/dispose watchers to match registry state
     broadcastRepos();
   };
-  const folderReconciler = new FolderReconciler(discoverRepos, applyDiscovered);
+  const folderReconciler = new FolderReconciler(
+    discoverRepos,
+    applyDiscovered,
+    selectionSerializer,
+  );
 
   const reconcileFolders = async (
     folders: Array<{ fsPath: string; name: string }>,
