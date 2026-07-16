@@ -69,6 +69,7 @@ function seedRoot(attrs: {
   repoId?: string;
   branch?: string;
   remote?: string;
+  repoName?: string;
 }) {
   let root = document.getElementById("root");
   if (!root) {
@@ -79,9 +80,11 @@ function seedRoot(attrs: {
   delete root.dataset.repoId;
   delete root.dataset.branch;
   delete root.dataset.remote;
+  delete root.dataset.repoName;
   if (attrs.repoId !== undefined) root.dataset.repoId = attrs.repoId;
   if (attrs.branch !== undefined) root.dataset.branch = attrs.branch;
   if (attrs.remote !== undefined) root.dataset.remote = attrs.remote;
+  if (attrs.repoName !== undefined) root.dataset.repoName = attrs.repoName;
 }
 
 /** Last call to `bridge.request` for a given command, or undefined. */
@@ -182,5 +185,84 @@ describe("PushApp re-init binding", () => {
       expect(push).toBeTruthy();
       expect(push?.[1]).toMatchObject({ remote: "up" });
     });
+  });
+});
+
+describe("PushApp header repo label (Task 25)", () => {
+  beforeEach(() => {
+    setRepoContext.mockReset();
+    request.mockClear();
+    onEvent.mockClear();
+    eventListener.current = null;
+    for (const k of Object.keys(responders)) delete responders[k];
+  });
+  afterEach(() => {
+    cleanup();
+    eventListener.current = null;
+  });
+
+  it("renders the seeded data-repo-name in the header", async () => {
+    seedRoot({
+      repoId: "A",
+      branch: "main",
+      remote: "origin",
+      repoName: "myrepo",
+    });
+    responders.getAheadCommits = () => ({ commits: [] });
+
+    render(<PushApp />);
+
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-repo-name") as HTMLElement | null)
+          ?.textContent,
+      ).toBe("myrepo");
+    });
+  });
+
+  it("updates the header when a pushPanelInit re-init carries repoName", async () => {
+    seedRoot({
+      repoId: "A",
+      branch: "main",
+      remote: "origin",
+      repoName: "first",
+    });
+    responders.getAheadCommits = () => ({ commits: [] });
+
+    render(<PushApp />);
+
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-repo-name") as HTMLElement | null)
+          ?.textContent,
+      ).toBe("first");
+    });
+
+    // Re-init to a different repo with a different disambiguated label.
+    emit("pushPanelInit", {
+      repoId: "B",
+      branchName: "main",
+      remote: "origin",
+      repoName: "other (path/to/other)",
+    });
+
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-repo-name") as HTMLElement | null)
+          ?.textContent,
+      ).toBe("other (path/to/other)");
+    });
+  });
+
+  it("renders no repo-name badge when the seed is absent", async () => {
+    seedRoot({ repoId: "A", branch: "main", remote: "origin" });
+    responders.getAheadCommits = () => ({ commits: [] });
+
+    render(<PushApp />);
+
+    await waitFor(() => {
+      expect(lastCall("getAheadCommits")).toBeTruthy();
+    });
+    expect(document.querySelector(".push-repo-name")).toBeNull();
   });
 });

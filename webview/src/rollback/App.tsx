@@ -30,6 +30,11 @@ function collectLeafPaths(node: FileTreeNode): string[] {
 export function RollbackApp() {
   const root = document.getElementById("root");
   const initialFilesJson = root?.dataset.files ?? "[]";
+  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
+  // Empty when absent (single-repo / legacy) → header renders no prefix.
+  const [repoName, setRepoName] = useState(
+    root?.dataset.repoName?.trim() ?? "",
+  );
 
   const [files, setFiles] = useState<RollbackFileInfo[]>(() =>
     JSON.parse(initialFilesJson),
@@ -121,7 +126,11 @@ export function RollbackApp() {
     return bridge.onEvent((event, data) => {
       if (event !== "rollbackPanelInit") return;
       if (rollingRef.current) return;
-      const payload = data as { repoId?: string; files?: RollbackFileInfo[] };
+      const payload = data as {
+        repoId?: string;
+        files?: RollbackFileInfo[];
+        repoName?: string;
+      };
       // Rebind to the host-supplied repo FIRST (bumps generation so any stale
       // in-flight response from the previous repo is dropped), then reload the
       // file list through the bound request. The payload may seed initial
@@ -129,6 +138,10 @@ export function RollbackApp() {
       // stamped with the bound repoId.
       if (payload.repoId !== undefined) {
         bindRepo(payload.repoId);
+      }
+      // Update the header repo label for the newly-targeted repo (Task 25).
+      if (payload.repoName !== undefined) {
+        setRepoName(payload.repoName.trim());
       }
       setError(null);
       setRolling(false);
@@ -198,6 +211,9 @@ export function RollbackApp() {
       {/* Header with view mode toggle */}
       <div className="rollback-header">
         <span className="rollback-title">
+          {repoName && (
+            <span className="rollback-repo-name">{repoName} — </span>
+          )}
           {files.length} file{files.length !== 1 ? "s" : ""}
         </span>
         <span className="rollback-view-toggle">

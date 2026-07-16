@@ -29,6 +29,13 @@ function parseMergeMsg(msg: string): { from: string; into: string } | null {
 }
 
 export function ConflictsApp() {
+  const root = document.getElementById("root");
+  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
+  // Empty when absent (single-repo / legacy) → header renders no suffix.
+  const [repoName, setRepoName] = useState(
+    root?.dataset.repoName?.trim() ?? "",
+  );
+
   const [mergeState, setMergeState] = useState<MergeState | null>(null);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,12 +133,16 @@ export function ConflictsApp() {
     return bridge.onEvent((event, data) => {
       if (event !== "conflictsPanelInit") return;
       if (mutatingRef.current) return;
-      const payload = data as { repoId?: string };
+      const payload = data as { repoId?: string; repoName?: string };
       // Rebind to the host-supplied repo FIRST (bumps generation so any stale
       // in-flight response from the previous repo is dropped), then reload via
       // the bound request.
       if (payload.repoId !== undefined) {
         bindRepo(payload.repoId);
+      }
+      // Update the header repo label for the newly-targeted repo (Task 25).
+      if (payload.repoName !== undefined) {
+        setRepoName(payload.repoName.trim());
       }
       setSelectedFiles([]);
       setLastSelectedFile(null);
@@ -332,7 +343,7 @@ export function ConflictsApp() {
             marginBottom: 4,
           }}
         >
-          Conflicts
+          Conflicts{repoName ? ` — ${repoName}` : ""}
         </h2>
         <p style={{ margin: 0, fontSize: 13, opacity: 0.8 }}>
           {branchInfo ? (

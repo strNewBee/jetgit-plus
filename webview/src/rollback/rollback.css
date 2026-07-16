@@ -26,6 +26,11 @@
   opacity: 0.9;
 }
 
+.rollback-repo-name {
+  font-weight: 600;
+  opacity: 1;
+}
+
 .rollback-view-toggle {
   display: inline-flex;
   align-items: center;

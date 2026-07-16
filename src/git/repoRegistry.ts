@@ -6,6 +6,31 @@ export interface RepoDescriptor {
   rootPath: string;
 }
 
+/**
+ * Disambiguated repo label for display. Returns `target.name` when that name is
+ * unique across `all`, else `${target.name} (${shortPath})` where `shortPath` is
+ * the last 2 segments of `target.rootPath` split on `[\\/]` — exactly mirroring
+ * RepoSwitcher's (webview/src/shared/components/RepoSwitcher.tsx) disambiguation
+ * so every surface shows the same string for the same repo.
+ *
+ * The label is computed at call time (open/reveal) from the CURRENT registry
+ * list, so it stays correct as repos are added/removed. Used by the operation
+ * panels (Push/Rollback/Conflicts) to show which repo they act on (Task 25).
+ */
+export function formatRepoLabel(
+  target: Pick<RepoDescriptor, "name" | "rootPath">,
+  all: Pick<RepoDescriptor, "name">[],
+): string {
+  const nameCount = all.filter((r) => r.name === target.name).length;
+  if (nameCount <= 1) return target.name;
+  const shortPath = target.rootPath
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .slice(-2)
+    .join("/");
+  return `${target.name} (${shortPath})`;
+}
+
 export interface RepositoryPaths {
   workTreeRoot: string;
   gitDir: string;

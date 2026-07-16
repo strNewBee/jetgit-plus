@@ -13,6 +13,22 @@
   padding: 10px 16px;
   border-bottom: 1px solid var(--border, #333);
   font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.push-repo-name {
+  font-weight: 600;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.push-repo-name::after {
+  content: " —";
+  opacity: 0.5;
+  font-weight: 400;
+  margin-left: 2px;
 }
 
 .push-route {

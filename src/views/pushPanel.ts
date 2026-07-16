@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import type { RepoRegistry } from "../git/repoRegistry";
+import { formatRepoLabel } from "../git/repoRegistry";
 import type { MessageRouter } from "../messages/messageRouter";
 import { getWebviewHtml } from "./html";
 
@@ -12,9 +14,22 @@ export class PushPanel {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly messageRouter: MessageRouter,
+    private readonly repoRegistry: RepoRegistry,
   ) {}
 
+  /**
+   * Disambiguated repo label for the given repo, computed from the CURRENT
+   * registry list so it stays correct as repos are added/removed. Empty string
+   * when the repo is no longer registered (panel falls back to no suffix).
+   */
+  private repoLabelFor(repoId: string): string {
+    const target = this.repoRegistry.get(repoId)?.descriptor;
+    if (!target) return "";
+    return formatRepoLabel(target, this.repoRegistry.list());
+  }
+
   open(repoId: string, branchName: string, remoteName = "origin"): void {
+    const repoName = this.repoLabelFor(repoId);
     if (this.panel) {
       this.panel.reveal();
       // Re-send init data. The panel is reused (not recreated), so main.tsx
@@ -22,11 +37,12 @@ export class PushPanel {
       // via bindRepo(payload.repoId). The remote key is `remote` to match the
       // create-time `data-remote` dataset (and the frontend's `payload.remote`
       // read) — previously this posted `remoteName`, which the frontend never
-      // read, silently falling back to "origin".
+      // read, silently falling back to "origin". `repoName` updates the header
+      // to the newly-targeted repo (Task 25).
       this.panel.webview.postMessage({
         type: "event",
         event: "pushPanelInit",
-        data: { repoId, branchName, remote: remoteName },
+        data: { repoId, branchName, remote: remoteName, repoName },
       });
       return;
     }
@@ -46,7 +62,12 @@ export class PushPanel {
       this.panel.webview,
       this.extensionUri,
       "push",
-      { "repo-id": repoId, branch: branchName, remote: remoteName },
+      {
+        "repo-id": repoId,
+        branch: branchName,
+        remote: remoteName,
+        "repo-name": repoName,
+      },
     );
 
     const routerDisposable = this.messageRouter.registerWebview(

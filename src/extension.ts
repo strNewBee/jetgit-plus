@@ -145,13 +145,22 @@ export async function activate(context: vscode.ExtensionContext) {
   const conflictsManager = new ConflictsManager(
     context.extensionUri,
     messageRouter,
+    repoRegistry,
   );
 
   // 4. PushPanel
-  const pushPanel = new PushPanel(context.extensionUri, messageRouter);
+  const pushPanel = new PushPanel(
+    context.extensionUri,
+    messageRouter,
+    repoRegistry,
+  );
 
   // 4b. RollbackPanel
-  const rollbackPanel = new RollbackPanel(context.extensionUri, messageRouter);
+  const rollbackPanel = new RollbackPanel(
+    context.extensionUri,
+    messageRouter,
+    repoRegistry,
+  );
 
   // 5. Register VSCode commands (always registered)
   context.subscriptions.push(

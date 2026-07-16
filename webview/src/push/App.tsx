@@ -71,6 +71,11 @@ export function PushApp() {
   const root = document.getElementById("root");
   const initialBranch = root?.dataset.branch ?? "";
   const initialRemote = root?.dataset.remote ?? "origin";
+  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
+  // Empty string when absent (single-repo / legacy) → header renders no suffix.
+  const [repoName, setRepoName] = useState(
+    root?.dataset.repoName?.trim() ?? "",
+  );
 
   // branchName is now state so it can be reloaded when the active repo changes
   // (via useRepoBoundOperation). It is seeded from the host-supplied dataset
@@ -231,12 +236,17 @@ export function PushApp() {
         branchName?: string;
         remote?: string;
         repoId?: string;
+        repoName?: string;
       };
       // Rebind to the host-supplied repo FIRST (bumps generation so any stale
       // in-flight response from the previous repo is dropped), then apply the
       // branch/remote and reload ahead commits through the bound request.
       if (payload.repoId !== undefined) {
         bindRepo(payload.repoId);
+      }
+      // Update the header repo label for the newly-targeted repo (Task 25).
+      if (payload.repoName !== undefined) {
+        setRepoName(payload.repoName.trim());
       }
       const branch = payload.branchName ?? "";
       const remote = payload.remote ?? "origin";
@@ -433,6 +443,7 @@ export function PushApp() {
     <div className="push-container">
       {/* Header */}
       <div className="push-header" ref={headerRef}>
+        {repoName && <span className="push-repo-name">{repoName}</span>}
         <span className="push-route">
           {branchName} →{" "}
           <span
