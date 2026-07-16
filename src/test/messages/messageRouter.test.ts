@@ -120,4 +120,20 @@ describe("MessageRouter repo context", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.strictEqual(responses[0].error?.code, "REPO_NOT_FOUND");
   });
+
+  it("allows repo-agnostic commands without repoId in strict mode", async () => {
+    const router = new MessageRouter();
+    router.enableStrictRepoContext();
+    router.handle("getRepos", async () => ({ repos: [], activeId: null }));
+    const responses: any[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as any).handleRequest(wv, {
+      type: "request",
+      id: "strict-agnostic",
+      command: "getRepos",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(responses[0].success, true);
+  });
 });

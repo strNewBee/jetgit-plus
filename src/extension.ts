@@ -1888,6 +1888,7 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBarItem.command = "jetgit-plus.gitLog.focus";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+  messageRouter.enableStrictRepoContext();
 }
 
 function extToLanguage(ext: string): string {
