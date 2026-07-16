@@ -15,6 +15,7 @@ import {
   JETGIT_PLUS_SCHEME,
 } from "./views/gitContentProvider";
 import { GitLogViewProvider } from "./views/gitLogViewProvider";
+import { buildGitContentUri } from "./views/gitUri";
 import { MergeEditorManager } from "./views/mergeEditorManager";
 import { PushPanel } from "./views/pushPanel";
 import type { RollbackFileInfo } from "./views/rollbackPanel";
@@ -236,11 +237,18 @@ export async function activate(context: vscode.ExtensionContext) {
       const uri = editor.document.uri;
       const line = editor.selection.active.line;
       const character = editor.selection.active.character;
-      const runtime = repoRegistry.getActive();
+
+      // Resolve the repo this document belongs to. Prefer an explicit `?repo=`
+      // on the URI (set by buildGitContentUri) so editing a file opened from
+      // repo B's diff works even when repo A is active; fall back to active.
+      const repoIdFromUri = new URLSearchParams(uri.query).get("repo");
+      const runtime = repoIdFromUri
+        ? repoRegistry.get(repoIdFromUri)
+        : repoRegistry.getActive();
       const workspaceRoot = runtime?.descriptor.rootPath;
 
       // Resolve the actual workspace file path from diff URI
-      // Format: jetgit-plus:/<relativePath>?ref=<commitHash>
+      // Format: jetgit-plus:/<relativePath>?ref=<commitHash>&repo=<repoId>
       let filePath: string | undefined;
 
       if (uri.scheme === "file") {
@@ -1109,9 +1117,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
     const ref = params.ref as string;
-    const uri = vscode.Uri.parse(
-      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${ref}`,
-    );
+    const uri = buildGitContentUri(ref, filePath, ctx.repoId);
     await vscode.window.showTextDocument(uri, { preview: true });
     return { success: true };
   });
@@ -1332,9 +1338,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     if (staged) {
       // Show diff between HEAD and staged
-      const leftUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=HEAD`,
-      );
+      const leftUri = buildGitContentUri("HEAD", filePath, ctx.repoId);
       await vscode.commands.executeCommand(
         "vscode.diff",
         leftUri,
@@ -1343,9 +1347,7 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     } else {
       // Show diff between HEAD and working tree
-      const leftUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=HEAD`,
-      );
+      const leftUri = buildGitContentUri("HEAD", filePath, ctx.repoId);
       await vscode.commands.executeCommand(
         "vscode.diff",
         leftUri,
@@ -1414,12 +1416,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const filePath = params.filePath as string;
 
     // Show diff between the stash version and the parent (before stash)
-    const stashUri = vscode.Uri.parse(
-      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${stashId}`,
-    );
-    const parentUri = vscode.Uri.parse(
-      `${JETGIT_PLUS_SCHEME}:/${filePath}?ref=${stashId}^`,
-    );
+    const stashUri = buildGitContentUri(stashId, filePath, ctx.repoId);
+    const parentUri = buildGitContentUri(`${stashId}^`, filePath, ctx.repoId);
     await vscode.commands.executeCommand(
       "vscode.diff",
       parentUri,

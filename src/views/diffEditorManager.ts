@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { JetGitError, JetGitErrorCode } from "../git/errors";
 import type { RepoRegistry } from "../git/repoRegistry";
 import type { DiffFile } from "../git/types";
-import { JETGIT_PLUS_SCHEME } from "./gitContentProvider";
+import { buildGitContentUri } from "./gitUri";
 
 export class DiffEditorManager {
   /** Current diff navigation state */
@@ -138,37 +138,21 @@ export class DiffEditorManager {
 
     switch (status) {
       case "added":
-        leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=empty&repo=${encodeURIComponent(repoId)}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
-        );
+        leftUri = buildGitContentUri("empty", newPath, repoId);
+        rightUri = buildGitContentUri(rightRef, newPath, repoId);
         break;
       case "deleted":
-        leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=empty&repo=${encodeURIComponent(repoId)}`,
-        );
+        leftUri = buildGitContentUri(leftRef, oldPath, repoId);
+        rightUri = buildGitContentUri("empty", oldPath, repoId);
         break;
       case "renamed":
       case "copied":
-        leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${oldPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
-        );
+        leftUri = buildGitContentUri(leftRef, oldPath, repoId);
+        rightUri = buildGitContentUri(rightRef, newPath, repoId);
         break;
       default: // modified
-        leftUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${leftRef}&repo=${encodeURIComponent(repoId)}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${JETGIT_PLUS_SCHEME}:/${newPath}?ref=${rightRef}&repo=${encodeURIComponent(repoId)}`,
-        );
+        leftUri = buildGitContentUri(leftRef, newPath, repoId);
+        rightUri = buildGitContentUri(rightRef, newPath, repoId);
         break;
     }
 
