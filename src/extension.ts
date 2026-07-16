@@ -27,14 +27,23 @@ const NOT_GIT_REPO = { status: "not_git_repo" as const, data: null };
 /** Temporary storage for shelf diff content (base/modified) */
 const shelfDiffContent = new Map<string, string>();
 
-/** Wrap a git operation with progress events */
-function withProgress(
+/**
+ * Wrap a git operation with progress events tagged by the acting repo.
+ *
+ * `repoId` is the repo the operation acts on (the handler's `ctx.repoId`), or
+ * `null` for a non-repo-bound operation. The payload `{ repoId }` is always
+ * sent (null included for symmetry) so the webview can filter busy state by the
+ * active repo — an operation on repo B does not disable the UI while repo A is
+ * visible.
+ */
+export function withProgress(
   messageRouter: MessageRouter,
+  repoId: string | null,
   fn: () => Promise<unknown>,
 ): Promise<unknown> {
-  messageRouter.broadcastEvent("operationStart", {});
+  messageRouter.broadcastEvent("operationStart", { repoId });
   return fn().finally(() => {
-    messageRouter.broadcastEvent("operationEnd", {});
+    messageRouter.broadcastEvent("operationEnd", { repoId });
   });
 }
 
@@ -481,7 +490,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const action = params.action as "continue" | "abort" | "skip";
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.cherryPickAction(action);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -503,7 +512,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const action = params.action as "continue" | "abort" | "skip";
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.rebaseAction(action);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -520,7 +529,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const action = params.action as "continue" | "abort";
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       if (action === "continue") {
         await gitService.mergeContinue();
       } else {
@@ -664,7 +673,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const branchName = params.branchName as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.checkout(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -727,7 +736,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const branchName = params.branchName as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.merge(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -741,7 +750,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const onto = params.onto as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.rebase(onto);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -756,7 +765,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const { gitService } = ctx;
     const branchToCheckout = params.branchToCheckout as string;
     const rebaseOnto = params.rebaseOnto as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.checkoutAndRebase(branchToCheckout, rebaseOnto);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -771,7 +780,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const { gitService } = ctx;
     const branchName = params.branchName as string;
     const force = params.force as boolean | undefined;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.push(branchName, force ?? false);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -796,7 +805,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const force = params.force as boolean | undefined;
     const remote = (params.remote as string) || "origin";
     const targetBranch = (params.targetBranch as string) || branchName;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       const output = await gitService.push(
         branchName,
         force ?? false,
@@ -895,7 +904,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.pull(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -909,7 +918,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.pullRebase(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -923,7 +932,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.pull(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -936,7 +945,7 @@ export async function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("fetchBranch", async (_params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.fetch();
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -950,7 +959,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const hash = params.hash as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.cherryPick(hash);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -1004,7 +1013,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const { gitService } = ctx;
     const hash = params.hash as string;
     const mode = params.mode as "soft" | "mixed" | "hard";
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.resetToCommit(hash, mode);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -1018,7 +1027,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
     const hash = params.hash as string;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.revertCommit(hash);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -1055,7 +1064,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     // Proceed with progress and 30-second timeout
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       const timeoutMs = 30_000;
       const dropPromise = gitService.dropCommit(hash);
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -1190,7 +1199,7 @@ export async function activate(context: vscode.ExtensionContext) {
       await gitService.stageFiles(filePaths);
     }
 
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.commitAndPush(message, amend ?? false);
       messageRouter.broadcastEvent("commitStateChanged", {
         repoId: ctx.repoId,
@@ -1678,7 +1687,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const checkout = params.checkout as boolean | undefined;
     const force = params.force as boolean | undefined;
     if (!name) return { success: false };
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.createBranch(name, "HEAD", force ?? false);
       if (checkout) {
         await gitService.checkout(name);
@@ -1702,7 +1711,7 @@ export async function activate(context: vscode.ExtensionContext) {
       "Delete",
     );
     if (confirm !== "Delete") return { success: false };
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.deleteBranch(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
@@ -1740,7 +1749,7 @@ export async function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("fetchAll", async (_params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
-    return withProgress(messageRouter, async () => {
+    return withProgress(messageRouter, ctx.repoId, async () => {
       await gitService.fetch();
       gitService.invalidateCache();
       messageRouter.broadcastEvent("gitStateChanged", {

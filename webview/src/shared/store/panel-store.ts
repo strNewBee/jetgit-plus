@@ -636,6 +636,75 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 }));
 
+// Per-repo operation progress tracking.
+//
+// `operationInProgress` is true ONLY when an operation targets the ACTIVE repo.
+// We track a per-repo COUNT of in-flight operations (a Map, not a Set, so two
+// concurrent ops on the same repo don't cancel early when the first one ends)
+// and recompute the boolean whenever an operation event arrives OR the active
+// repo changes. An `operationStart{repoId:"B"}` while repo A is visible does
+// NOT set `operationInProgress` (the op isn't on the visible repo); switching to
+// B then re-derives busy=true so the in-flight B op shows correctly.
+// `repoId: null` (a non-repo-bound operation) is ignored — it cannot match any
+// active repo, so its progress never disables the UI (acceptable for global
+// operations).
+const inFlightOpCounts = new Map<string, number>();
+
+function recomputeOperationInProgress() {
+  const activeRepoId = useRepoStore.getState().activeRepoId;
+  usePanelStore.setState({
+    operationInProgress:
+      activeRepoId !== null && (inFlightOpCounts.get(activeRepoId) ?? 0) > 0,
+  });
+}
+
+function incrementInFlight(repoId: string): void {
+  inFlightOpCounts.set(repoId, (inFlightOpCounts.get(repoId) ?? 0) + 1);
+  recomputeOperationInProgress();
+}
+
+function decrementInFlight(repoId: string): void {
+  const next = (inFlightOpCounts.get(repoId) ?? 0) - 1;
+  if (next <= 0) {
+    inFlightOpCounts.delete(repoId);
+  } else {
+    inFlightOpCounts.set(repoId, next);
+  }
+  recomputeOperationInProgress();
+}
+
+/** Reset per-repo progress tracking (test-only). */
+export function _resetOperationProgressForTests(): void {
+  inFlightOpCounts.clear();
+  recomputeOperationInProgress();
+}
+
+/**
+ * Mark a client-side operation (one issued via `bridgeWithProgress`) as
+ * in-flight for `repoId`. Client-side ops that are NOT host-wrapped in
+ * `withProgress` (e.g. createBranch, deleteBranch, checkoutCommit,
+ * revertFileChanges) would otherwise never surface a busy state, because the
+ * host never broadcasts operationStart/End for them. Routing the marker through
+ * the same per-repo count keeps the per-active-repo filter correct: the op only
+ * disables the UI when it targets the visible repo, and concurrent ops on the
+ * same repo don't clear early.
+ *
+ * `repoId: null` (no active repo) is a no-op — there is no visible repo to
+ * disable.
+ */
+export function _beginClientOperation(repoId: string | null): void {
+  if (typeof repoId === "string") {
+    incrementInFlight(repoId);
+  }
+}
+
+/** Clear the in-flight marker established by `_beginClientOperation`. */
+export function _endClientOperation(repoId: string | null): void {
+  if (typeof repoId === "string") {
+    decrementInFlight(repoId);
+  }
+}
+
 // Listen for git state changes
 bridge.onEvent((event, data) => {
   if (event === "gitStateChanged") {
@@ -649,9 +718,24 @@ bridge.onEvent((event, data) => {
     usePanelStore.getState().setFilter({ file });
   }
   if (event === "operationStart") {
-    usePanelStore.setState({ operationInProgress: true });
+    const { repoId } = data as { repoId?: string | null };
+    if (typeof repoId === "string") {
+      incrementInFlight(repoId);
+    }
   }
   if (event === "operationEnd") {
-    usePanelStore.setState({ operationInProgress: false });
+    const { repoId } = data as { repoId?: string | null };
+    if (typeof repoId === "string") {
+      decrementInFlight(repoId);
+    } else {
+      // Legacy/null event: clear all (defensive — a null op can't be matched,
+      // so the only safe assumption on a null end is to drop everything).
+      inFlightOpCounts.clear();
+      recomputeOperationInProgress();
+    }
+  }
+  if (event === "activeRepoChanged") {
+    // Re-derive busy for the newly-active repo so an in-flight op on it shows.
+    recomputeOperationInProgress();
   }
 });
