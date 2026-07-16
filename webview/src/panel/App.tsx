@@ -50,6 +50,7 @@ export function PanelApp() {
   const loading = usePanelStore((s) => s.loading);
   const operationInProgress = usePanelStore((s) => s.operationInProgress);
   const fetchInitialData = usePanelStore((s) => s.fetchInitialData);
+  const repos = useRepoStore((s) => s.repos);
 
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
@@ -118,15 +119,17 @@ export function PanelApp() {
         position: "relative",
       }}
     >
-      <div
-        style={{
-          flexShrink: 0,
-          padding: "4px 8px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <RepoSwitcher disabled={loading || operationInProgress} />
-      </div>
+      {repos.length > 1 && (
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "4px 8px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <RepoSwitcher disabled={loading || operationInProgress} />
+        </div>
+      )}
       <ProgressBar visible={operationInProgress || loading} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* Left branch panel — outside Allotment to avoid flicker */}

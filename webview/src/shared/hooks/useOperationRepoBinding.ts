@@ -24,8 +24,12 @@ export function useOperationRepoBinding(
   onFollowRef.current = onFollow;
 
   const apply = useCallback(async (repoId: string | null) => {
-    bridge.setRepoContext(repoId);
-    await onFollowRef.current(repoId);
+    try {
+      bridge.setRepoContext(repoId);
+      await onFollowRef.current(repoId);
+    } catch (e) {
+      console.error("useOperationRepoBinding apply failed:", e);
+    }
   }, []);
 
   useEffect(() => {

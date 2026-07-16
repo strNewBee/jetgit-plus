@@ -521,6 +521,7 @@ export function CommitApp() {
   const activeTab = useCommitStore((s) => s.activeTab);
   const setActiveTab = useCommitStore((s) => s.setActiveTab);
   const loading = useCommitStore((s) => s.loading);
+  const repos = useRepoStore((s) => s.repos);
 
   useEffect(() => {
     subscribeRepoEvents();
@@ -551,15 +552,17 @@ export function CommitApp() {
 
   return (
     <div className="commit-app">
-      <div
-        style={{
-          flexShrink: 0,
-          padding: "4px 8px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <RepoSwitcher disabled={loading} />
-      </div>
+      {repos.length > 1 && (
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "4px 8px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <RepoSwitcher disabled={loading} />
+        </div>
+      )}
       <div className="commit-tabs">
         <button
           type="button"
