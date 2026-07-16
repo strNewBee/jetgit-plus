@@ -1,4 +1,4 @@
-import type { Bridge } from "./types";
+import type { Bridge, CommandType } from "./types";
 import { createVSCodeBridge } from "./vscode-bridge";
 
 export const bridge: Bridge = createVSCodeBridge();
@@ -9,7 +9,7 @@ export const bridge: Bridge = createVSCodeBridge();
  * Minimum display time of 1s to ensure the animation is visible.
  */
 export async function bridgeWithProgress(
-  command: string,
+  command: CommandType,
   params?: Record<string, unknown>,
 ): Promise<unknown> {
   const { usePanelStore } = await import("../store/panel-store");

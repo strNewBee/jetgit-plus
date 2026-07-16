@@ -1,8 +1,19 @@
+/**
+ * Public repo identity as seen by the webview. The host-only `RepositoryPaths`
+ * (workTreeRoot/gitDir/commonDir) is intentionally NOT mirrored here.
+ */
+export interface RepoDescriptor {
+  id: string;
+  name: string;
+  rootPath: string;
+}
+
 export interface RequestMessage {
   type: "request";
   id: string;
-  command: string;
+  command: CommandType;
   params: Record<string, unknown>;
+  repoId?: string;
 }
 
 export interface ResponseMessage {
@@ -69,7 +80,9 @@ export type CommandType =
   | "getShelves"
   | "shelveChanges"
   | "unshelveChanges"
+  | "unshelveFile"
   | "deleteShelve"
+  | "showShelfFileDiff"
   | "showDiffForWorkingFile"
   | "getAmendMessage"
   | "getIdeaShelves"
@@ -88,6 +101,17 @@ export type CommandType =
   | "rebaseAction"
   | "mergeAction"
   | "cherryPickAction"
+  | "checkoutCommit"
+  | "cherryPick"
+  | "cherryPickFileChanges"
+  | "createTag"
+  | "resetToCommit"
+  | "revertCommit"
+  | "revertFileChanges"
+  | "openFileAtRevision"
+  | "copyToClipboard"
+  | "showConfirmMessage"
+  | "showInputBox"
   | "showErrorNotification"
   | "showInfoNotification"
   | "openConflictsPanel"
@@ -111,12 +135,25 @@ export type CommandType =
   | "closePushPanel"
   | "openRollbackPanel"
   | "executeRollback"
-  | "closeRollbackPanel";
+  | "closeRollbackPanel"
+  | "getRepos"
+  | "selectRepo";
+
+/**
+ * Request scope. "repo" (default) binds the call to the active repo context;
+ * "global" opts out of repo-binding for control-plane calls (e.g. getRepos,
+ * selectRepo) so they survive a repo switch without a hard-coded command list.
+ */
+export interface BridgeRequestOptions {
+  scope?: "repo" | "global";
+}
 
 export interface Bridge {
   request(
-    command: CommandType | string,
+    command: CommandType,
     params?: Record<string, unknown>,
+    options?: BridgeRequestOptions,
   ): Promise<unknown>;
   onEvent(handler: (event: string, data: unknown) => void): () => void;
+  setRepoContext(repoId: string | null): void;
 }

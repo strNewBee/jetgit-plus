@@ -1,8 +1,12 @@
+import type { GitService } from "../git/gitService";
+import type { RepoDescriptor, RepositoryPaths } from "../git/repoRegistry";
+
 export interface RequestMessage {
   type: "request";
   id: string;
   command: CommandType;
   params: Record<string, unknown>;
+  repoId?: string;
 }
 
 export interface ResponseMessage {
@@ -23,6 +27,18 @@ export interface EventMessage {
 }
 
 export type Message = RequestMessage | ResponseMessage | EventMessage;
+
+/**
+ * Request-level context resolved by the router from `RequestMessage.repoId`.
+ * Handlers that need repo binding consume this; control-plane commands
+ * (scope "global") may be invoked without one.
+ */
+export interface RequestContext {
+  repoId: string;
+  repo: RepoDescriptor;
+  paths: RepositoryPaths;
+  gitService: GitService;
+}
 
 export type CommandType =
   | "getLog"
@@ -52,6 +68,7 @@ export type CommandType =
   | "openFile"
   | "checkoutBranch"
   | "createBranch"
+  | "createBranchFromCommit"
   | "deleteBranch"
   | "renameBranch"
   | "mergeBranch"
@@ -71,7 +88,9 @@ export type CommandType =
   | "getShelves"
   | "shelveChanges"
   | "unshelveChanges"
+  | "unshelveFile"
   | "deleteShelve"
+  | "showShelfFileDiff"
   | "showDiffForWorkingFile"
   | "getAmendMessage"
   | "getIdeaShelves"
@@ -90,6 +109,19 @@ export type CommandType =
   | "rebaseAction"
   | "mergeAction"
   | "cherryPickAction"
+  | "checkoutCommit"
+  | "cherryPick"
+  | "cherryPickFileChanges"
+  | "createTag"
+  | "resetToCommit"
+  | "revertCommit"
+  | "revertFileChanges"
+  | "openFileAtRevision"
+  | "copyToClipboard"
+  | "showConfirmMessage"
+  | "showInputBox"
+  | "showErrorNotification"
+  | "showInfoNotification"
   | "openConflictsPanel"
   | "importPatchFromClipboard"
   | "createBranchPrompt"
@@ -111,7 +143,9 @@ export type CommandType =
   | "closePushPanel"
   | "openRollbackPanel"
   | "executeRollback"
-  | "closeRollbackPanel";
+  | "closeRollbackPanel"
+  | "getRepos"
+  | "selectRepo";
 
 export type EventType =
   | "gitStateChanged"
@@ -121,7 +155,9 @@ export type EventType =
   | "operationStart"
   | "operationEnd"
   | "commitStateChanged"
-  | "rollbackPanelInit";
+  | "rollbackPanelInit"
+  | "activeRepoChanged"
+  | "reposChanged";
 
 export interface RemoteBranchGroup {
   remote: string;
@@ -135,5 +171,23 @@ export enum ErrorCode {
   INVALID_REF = "INVALID_REF",
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
   MERGE_CONFLICT = "MERGE_CONFLICT",
+  REPO_NOT_FOUND = "REPO_NOT_FOUND",
   UNKNOWN = "UNKNOWN",
+}
+
+/** Emitted when the active repository changes (incl. to null). */
+export interface ActiveRepoChangedEvent {
+  repo: RepoDescriptor | null;
+}
+
+/** Emitted when the set of known repositories changes. */
+export interface ReposChangedEvent {
+  repos: RepoDescriptor[];
+  activeId: string | null;
+}
+
+/** Payload for `gitStateChanged`; `repoId` identifies which repo changed. */
+export interface GitStateChangedEvent {
+  scope: "all" | "branches" | "status" | "mergeState" | "log";
+  repoId: string;
 }

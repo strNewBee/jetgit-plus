@@ -41,7 +41,9 @@ export function createVSCodeBridge(): Bridge {
   });
 
   return {
-    request(command, params = {}) {
+    // `options` is accepted to satisfy the Bridge contract; repoId attachment,
+    // generation counting, and stale-drop arrive in Task 8.
+    request(command, params = {}, _options?) {
       return new Promise((resolve, reject) => {
         const id = crypto.randomUUID();
         const timeout = setTimeout(() => {
@@ -69,6 +71,9 @@ export function createVSCodeBridge(): Bridge {
       return () => {
         eventHandlers.delete(handler);
       };
+    },
+    setRepoContext(_repoId) {
+      /* implemented in Task 8 */
     },
   };
 }
