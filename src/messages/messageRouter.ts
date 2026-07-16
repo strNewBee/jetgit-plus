@@ -1,33 +1,63 @@
 import type * as vscode from "vscode";
+import { JetGitError } from "../git/errors";
 import {
+  type CommandType,
   ErrorCode,
   type EventMessage,
   type EventType,
+  type RequestContext,
   type RequestMessage,
   type ResponseMessage,
 } from "./protocol";
 
 export type CommandHandler = (
   params: Record<string, unknown>,
+  context?: RequestContext,
 ) => Promise<unknown>;
+
+export type RepoResolver = (
+  repoId: string | undefined,
+) => RequestContext | null;
+
+/** Commands that never touch a repo and must not require repoId. */
+const REPO_AGNOSTIC_COMMANDS = new Set<CommandType>([
+  "showInputBox",
+  "showConfirmMessage",
+  "showErrorNotification",
+  "showInfoNotification",
+  "copyToClipboard",
+  "toggleBranchGroupByDirectory",
+  "setSingleClickAction",
+  "toggleShowTags",
+  "getRepos",
+  "selectRepo",
+]);
 
 export class MessageRouter {
   private webviews = new Set<vscode.Webview>();
   private handlers = new Map<string, CommandHandler>();
+  private repoResolver: RepoResolver | null = null;
+  private strictRepoContext = false;
 
-  /** Register a command handler */
-  handle(command: string, handler: CommandHandler): void {
+  handle(command: CommandType, handler: CommandHandler): void {
     this.handlers.set(command, handler);
   }
 
-  /** Register a webview to receive events and handle requests */
+  /** Set how repoId → RequestContext is resolved. Undefined means active repo in compatibility mode. */
+  setRepoResolver(resolver: RepoResolver): void {
+    this.repoResolver = resolver;
+  }
+
+  /** Call only after every repo-bound webview initializes Bridge repo context. */
+  enableStrictRepoContext(): void {
+    this.strictRepoContext = true;
+  }
+
   registerWebview(webview: vscode.Webview): vscode.Disposable {
     this.webviews.add(webview);
-
     const messageDisposable = webview.onDidReceiveMessage(
       (msg: RequestMessage) => this.handleRequest(webview, msg),
     );
-
     return {
       dispose: () => {
         this.webviews.delete(webview);
@@ -36,7 +66,6 @@ export class MessageRouter {
     };
   }
 
-  /** Broadcast an event to all registered webviews */
   broadcastEvent(event: EventType, data: unknown): void {
     const msg: EventMessage = { type: "event", event, data };
     for (const webview of this.webviews) {
@@ -48,9 +77,7 @@ export class MessageRouter {
     webview: vscode.Webview,
     msg: RequestMessage,
   ): Promise<void> {
-    if (msg.type !== "request") {
-      return;
-    }
+    if (msg.type !== "request") return;
 
     const handler = this.handlers.get(msg.command);
     if (!handler) {
@@ -61,13 +88,50 @@ export class MessageRouter {
       return;
     }
 
+    let context: RequestContext | undefined;
+    if (!REPO_AGNOSTIC_COMMANDS.has(msg.command)) {
+      if (!msg.repoId && this.strictRepoContext) {
+        this.sendResponse(webview, msg.id, false, undefined, {
+          code: ErrorCode.REPO_NOT_FOUND,
+          message: "No repository context for this request",
+        });
+        return;
+      }
+
+      // Before Task 4 installs a resolver, only requests without an explicit repo
+      // stay on the legacy path. An explicit id is never allowed to fall through.
+      if (!this.repoResolver && msg.repoId) {
+        this.sendResponse(webview, msg.id, false, undefined, {
+          code: ErrorCode.REPO_NOT_FOUND,
+          message: `Repository not available: ${msg.repoId}`,
+        });
+        return;
+      }
+      if (this.repoResolver) {
+        const resolved = this.repoResolver(msg.repoId);
+        if (!resolved) {
+          this.sendResponse(webview, msg.id, false, undefined, {
+            code: ErrorCode.REPO_NOT_FOUND,
+            message: msg.repoId
+              ? `Repository not available: ${msg.repoId}`
+              : "No active repository",
+          });
+          return;
+        }
+        context = resolved;
+      }
+    }
+
     try {
-      const data = await handler(msg.params);
+      const data = await handler(msg.params, context);
       this.sendResponse(webview, msg.id, true, data);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.sendResponse(webview, msg.id, false, undefined, {
-        code: ErrorCode.UNKNOWN,
+        code:
+          err instanceof JetGitError
+            ? (err.code as ErrorCode)
+            : ErrorCode.UNKNOWN,
         message,
       });
     }

@@ -1,0 +1,123 @@
+import * as assert from "node:assert";
+import type * as vscode from "vscode";
+import { GitService } from "../../git/gitService";
+import {
+  type CommandHandler,
+  MessageRouter,
+} from "../../messages/messageRouter";
+import type {
+  RequestContext,
+  RequestMessage,
+  ResponseMessage,
+} from "../../messages/protocol";
+
+// Minimal fake webview — MessageRouter uses only postMessage + onDidReceiveMessage.
+function fakeWebview(onPost: (msg: ResponseMessage) => void): vscode.Webview {
+  return {
+    postMessage: onPost,
+    onDidReceiveMessage: () => ({ dispose: () => {} }),
+  } as unknown as vscode.Webview;
+}
+
+// Expose the private handler entry point so tests can drive the resolution path
+// without going through the real webview message bus.
+interface RouterWithHandleRequest {
+  handleRequest(webview: vscode.Webview, msg: RequestMessage): Promise<void>;
+}
+
+describe("MessageRouter repo context", () => {
+  it("resolves and passes RequestContext to handler", async () => {
+    const router = new MessageRouter();
+    const paths = {
+      workTreeRoot: "/r",
+      gitDir: "/r/.git",
+      commonDir: "/r/.git",
+    };
+    const ctx: RequestContext = {
+      repoId: "/r",
+      repo: { id: "/r", name: "r", rootPath: "/r" },
+      paths,
+      gitService: new GitService(paths),
+    };
+    router.setRepoResolver((id) => (id === "/r" ? ctx : null));
+    let received: RequestContext | undefined;
+    router.handle("getStatus", ((_p, c) => {
+      received = c;
+      return {};
+    }) as CommandHandler);
+
+    const received2: ResponseMessage[] = [];
+    const wv = fakeWebview((m) => received2.push(m));
+    router.registerWebview(wv);
+    // handleRequest is private; call it directly to exercise the resolution path.
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "1",
+      command: "getStatus",
+      params: {},
+      repoId: "/r",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.strictEqual(received, ctx);
+    assert.strictEqual(received2[0].success, true);
+  });
+
+  it("rejects an explicit unknown repoId even in compatibility mode", async () => {
+    const router = new MessageRouter();
+    router.setRepoResolver((id) =>
+      id === undefined ? ({ repoId: "/active" } as RequestContext) : null,
+    );
+    router.handle("getStatus", (async () => ({})) as CommandHandler);
+    const received: ResponseMessage[] = [];
+    const wv = fakeWebview((m) => received.push(m));
+    router.registerWebview(wv);
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "2",
+      command: "getStatus",
+      params: {},
+      repoId: "/missing",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.strictEqual(received[0].success, false);
+    assert.strictEqual(received[0].error?.code, "REPO_NOT_FOUND");
+  });
+
+  it("keeps legacy requests runnable before a resolver is installed", async () => {
+    const router = new MessageRouter();
+    let called = false;
+    router.handle("getStatus", async (_params, context) => {
+      called = true;
+      assert.strictEqual(context, undefined);
+      return {};
+    });
+    const responses: ResponseMessage[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "3",
+      command: "getStatus",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(called, true);
+    assert.strictEqual(responses[0].success, true);
+  });
+
+  it("requires repoId only after the explicit strict-mode flip", async () => {
+    const router = new MessageRouter();
+    router.setRepoResolver(() => ({ repoId: "/active" }) as RequestContext);
+    router.enableStrictRepoContext();
+    router.handle("getStatus", async () => ({}));
+    const responses: ResponseMessage[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "4",
+      command: "getStatus",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(responses[0].error?.code, "REPO_NOT_FOUND");
+  });
+});
