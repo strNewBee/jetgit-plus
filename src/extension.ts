@@ -3,7 +3,11 @@ import * as vscode from "vscode";
 import { JetGitError, JetGitErrorCode } from "./git/errors";
 import { GitService } from "./git/gitService";
 import { discoverRepos } from "./git/repoDiscovery";
-import { type DiscoveredRepo, RepoRegistry } from "./git/repoRegistry";
+import {
+  type DiscoveredRepo,
+  formatRepoLabel,
+  RepoRegistry,
+} from "./git/repoRegistry";
 import {
   FolderReconciler,
   RepoSelectionCoordinator,
@@ -1818,6 +1822,20 @@ export async function activate(context: vscode.ExtensionContext) {
     activeId: repoRegistry.getActiveId(),
   }));
 
+  // Single source of truth for the active-repo broadcast: computes the
+  // disambiguated label (formatRepoLabel) from the current registry list so the
+  // webview's panel header stays in lockstep with repoId — not just on panel
+  // re-open but on every idle-follow switch. The label can shift on
+  // reposChanged without the id changing (adding a same-name repo flips the
+  // active repo's label to include the path suffix), so the label is recomputed
+  // here at broadcast time, not cached.
+  const broadcastActiveRepoChanged = (
+    repo: { id: string; name: string; rootPath: string } | null,
+  ) => {
+    const repoName = repo ? formatRepoLabel(repo, repoRegistry.list()) : "";
+    messageRouter.broadcastEvent("activeRepoChanged", { repo, repoName });
+  };
+
   // Task 24 (P2#6): serialize concurrent selects via a promise-chain mutex so
   // the broadcast always reflects the truly-active repo. The coordinator
   // re-reads the active id from the registry (source of truth) and persists
@@ -1827,7 +1845,7 @@ export async function activate(context: vscode.ExtensionContext) {
     repoRegistry,
     (activeId) =>
       context.workspaceState.update("jetgit.activeRepoId", activeId),
-    (repo) => messageRouter.broadcastEvent("activeRepoChanged", { repo }),
+    (repo) => broadcastActiveRepoChanged(repo),
   );
 
   messageRouter.handle("selectRepo", async (params) => {
@@ -1906,12 +1924,17 @@ export async function activate(context: vscode.ExtensionContext) {
     await folderReconciler.reconcile(folders);
     const activeId = repoRegistry.getActiveId();
     await context.workspaceState.update("jetgit.activeRepoId", activeId);
-    if (activeId !== previousActiveId) {
-      const repo = activeId
-        ? (repoRegistry.get(activeId)?.descriptor ?? null)
-        : null;
-      messageRouter.broadcastEvent("activeRepoChanged", { repo });
-    }
+    // Re-broadcast the active repo after every reconcile pass. When the active
+    // id CHANGED, this is the authoritative switch broadcast. When it did NOT
+    // change, the broadcast is still needed because the repo set changed — the
+    // active repo's disambiguated label may have shifted (e.g. adding a
+    // same-name repo appends the path suffix). Re-computing the label here
+    // (broadcastActiveRepoChanged → formatRepoLabel) keeps the panel header
+    // correct without a panel re-open. Cheap + idempotent.
+    const activeRepo = activeId
+      ? (repoRegistry.get(activeId)?.descriptor ?? null)
+      : null;
+    broadcastActiveRepoChanged(activeRepo);
   };
 
   context.subscriptions.push(

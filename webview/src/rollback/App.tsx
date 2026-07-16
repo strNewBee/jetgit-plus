@@ -30,11 +30,6 @@ function collectLeafPaths(node: FileTreeNode): string[] {
 export function RollbackApp() {
   const root = document.getElementById("root");
   const initialFilesJson = root?.dataset.files ?? "[]";
-  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
-  // Empty when absent (single-repo / legacy) → header renders no prefix.
-  const [repoName, setRepoName] = useState(
-    root?.dataset.repoName?.trim() ?? "",
-  );
 
   const [files, setFiles] = useState<RollbackFileInfo[]>(() =>
     JSON.parse(initialFilesJson),
@@ -81,7 +76,10 @@ export function RollbackApp() {
   // Authoritative repo binding + bound request. `busy = rolling` (rollback is
   // atomic — no rejected/recovery flow). Every repo-bound request goes through
   // `request` so it carries the panel's authoritative repoId.
-  const { request, bindRepo } = useRepoBoundOperation(rolling, onFollowRepo);
+  const { repoName, request, bindRepo } = useRepoBoundOperation(
+    rolling,
+    onFollowRepo,
+  );
 
   // Load file list for the bound repo. Used both for the initial idle-follow
   // (via the hook) and when the active repo changes. Every request goes through
@@ -137,11 +135,7 @@ export function RollbackApp() {
       // display, but the authoritative list comes from getWorkingTreeChanges
       // stamped with the bound repoId.
       if (payload.repoId !== undefined) {
-        bindRepo(payload.repoId);
-      }
-      // Update the header repo label for the newly-targeted repo (Task 25).
-      if (payload.repoName !== undefined) {
-        setRepoName(payload.repoName.trim());
+        bindRepo(payload.repoId, payload.repoName?.trim() ?? "");
       }
       setError(null);
       setRolling(false);

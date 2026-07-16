@@ -71,11 +71,6 @@ export function PushApp() {
   const root = document.getElementById("root");
   const initialBranch = root?.dataset.branch ?? "";
   const initialRemote = root?.dataset.remote ?? "origin";
-  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
-  // Empty string when absent (single-repo / legacy) → header renders no suffix.
-  const [repoName, setRepoName] = useState(
-    root?.dataset.repoName?.trim() ?? "",
-  );
 
   // branchName is now state so it can be reloaded when the active repo changes
   // (via useRepoBoundOperation). It is seeded from the host-supplied dataset
@@ -153,7 +148,7 @@ export function PushApp() {
   // to recover — otherwise switching the active repo mid-dialog would re-bind
   // the bridge away from the rejected repo before the recovery handler runs.
   // `busy = pushing || pushRejected.show`.
-  const { request, bindRepo } = useRepoBoundOperation(
+  const { repoName, request, bindRepo } = useRepoBoundOperation(
     pushing || pushRejected.show,
     onFollowRepo,
   );
@@ -240,13 +235,10 @@ export function PushApp() {
       };
       // Rebind to the host-supplied repo FIRST (bumps generation so any stale
       // in-flight response from the previous repo is dropped), then apply the
-      // branch/remote and reload ahead commits through the bound request.
+      // branch/remote and reload ahead commits through the bound request. The
+      // label travels through the hook so the header stays in lockstep.
       if (payload.repoId !== undefined) {
-        bindRepo(payload.repoId);
-      }
-      // Update the header repo label for the newly-targeted repo (Task 25).
-      if (payload.repoName !== undefined) {
-        setRepoName(payload.repoName.trim());
+        bindRepo(payload.repoId, payload.repoName?.trim() ?? "");
       }
       const branch = payload.branchName ?? "";
       const remote = payload.remote ?? "origin";

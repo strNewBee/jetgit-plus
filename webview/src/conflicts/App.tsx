@@ -29,13 +29,6 @@ function parseMergeMsg(msg: string): { from: string; into: string } | null {
 }
 
 export function ConflictsApp() {
-  const root = document.getElementById("root");
-  // Disambiguated repo label seeded from the host (Task 25). Updated on re-init.
-  // Empty when absent (single-repo / legacy) → header renders no suffix.
-  const [repoName, setRepoName] = useState(
-    root?.dataset.repoName?.trim() ?? "",
-  );
-
   const [mergeState, setMergeState] = useState<MergeState | null>(null);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +78,7 @@ export function ConflictsApp() {
   // active-repo change can't rebind the bridge away mid-mutation). Every
   // repo-bound request goes through `request` so it carries the panel's
   // authoritative repoId.
-  const { request, bindRepo } = useRepoBoundOperation(
+  const { repoName, request, bindRepo } = useRepoBoundOperation(
     loading || mutating,
     onFollowRepo,
   );
@@ -138,11 +131,7 @@ export function ConflictsApp() {
       // in-flight response from the previous repo is dropped), then reload via
       // the bound request.
       if (payload.repoId !== undefined) {
-        bindRepo(payload.repoId);
-      }
-      // Update the header repo label for the newly-targeted repo (Task 25).
-      if (payload.repoName !== undefined) {
-        setRepoName(payload.repoName.trim());
+        bindRepo(payload.repoId, payload.repoName?.trim() ?? "");
       }
       setSelectedFiles([]);
       setLastSelectedFile(null);
