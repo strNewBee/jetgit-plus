@@ -1927,26 +1927,42 @@ export async function activate(context: vscode.ExtensionContext) {
     discoverRepos,
     applyDiscovered,
     selectionSerializer,
+    // Fix-5 revision (I1): the post-reconcile persist + broadcast runs UNDER the
+    // shared serializer (inside runPass's finally, before the mutex releases),
+    // so a concurrently-queued `select` cannot interleave its own
+    // persist/broadcast between the reconciler's registry mutation and this tail.
+    // Pre-fix this tail ran OFF the mutex in reconcileFolders: during its
+    // `await workspaceState.update` a queued `select` ran its full body, then
+    // this tail resumed and broadcast the STALE pre-select active id LAST and
+    // overwrote the select's fresh persisted value — the F5-class interleave the
+    // shared serializer was meant to close. Running it under the mutex via
+    // onSettled closes that window with no nested chain acquisition (this
+    // closure only reads the registry + persists + broadcasts).
+    async () => {
+      const activeId = repoRegistry.getActiveId();
+      await context.workspaceState.update("jetgit.activeRepoId", activeId);
+      // Re-broadcast the active repo after every reconcile pass. When the active
+      // id CHANGED, this is the authoritative switch broadcast. When it did NOT
+      // change, the broadcast is still needed because the repo set changed — the
+      // active repo's disambiguated label may have shifted (e.g. adding a
+      // same-name repo appends the path suffix). Re-computing the label here
+      // (broadcastActiveRepoChanged → formatRepoLabel) keeps the panel header
+      // correct without a panel re-open. Cheap + idempotent.
+      const activeRepo = activeId
+        ? (repoRegistry.get(activeId)?.descriptor ?? null)
+        : null;
+      broadcastActiveRepoChanged(activeRepo);
+    },
   );
 
   const reconcileFolders = async (
     folders: Array<{ fsPath: string; name: string }>,
   ) => {
-    const previousActiveId = repoRegistry.getActiveId();
-    await folderReconciler.reconcile(folders);
-    const activeId = repoRegistry.getActiveId();
-    await context.workspaceState.update("jetgit.activeRepoId", activeId);
-    // Re-broadcast the active repo after every reconcile pass. When the active
-    // id CHANGED, this is the authoritative switch broadcast. When it did NOT
-    // change, the broadcast is still needed because the repo set changed — the
-    // active repo's disambiguated label may have shifted (e.g. adding a
-    // same-name repo appends the path suffix). Re-computing the label here
-    // (broadcastActiveRepoChanged → formatRepoLabel) keeps the panel header
-    // correct without a panel re-open. Cheap + idempotent.
-    const activeRepo = activeId
-      ? (repoRegistry.get(activeId)?.descriptor ?? null)
-      : null;
-    broadcastActiveRepoChanged(activeRepo);
+    // The persist + broadcast of the active repo now happens INSIDE the
+    // reconciler's runPass (under the shared serializer) via onSettled, so this
+    // wrapper just delegates. See the folderReconciler construction above for
+    // why the tail must run under the mutex (I1).
+    return folderReconciler.reconcile(folders);
   };
 
   context.subscriptions.push(

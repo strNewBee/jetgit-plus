@@ -35,16 +35,19 @@ async function drainMicrotasks(hops = 8): Promise<void> {
   for (let i = 0; i < hops; i++) await Promise.resolve();
 }
 
-/** A promise we can resolve on demand to control async ordering deterministically. */
+/** A promise we can resolve/reject on demand to control async ordering deterministically. */
 function deferred<T = void>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
 } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("RepoSelectionCoordinator (P2#6 selectRepo race)", () => {
@@ -156,6 +159,7 @@ describe("FolderReconciler (P2#9 folder reconciliation)", () => {
       d: {
         promise: Promise<DiscoveredRepo[]>;
         resolve: (v: DiscoveredRepo[]) => void;
+        reject: (reason?: unknown) => void;
       };
     }> = [];
     const discover = (
@@ -424,6 +428,7 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
       d: {
         promise: Promise<DiscoveredRepo[]>;
         resolve: (v: DiscoveredRepo[]) => void;
+        reject: (reason?: unknown) => void;
       };
     }> = [];
     const discover = (
@@ -464,7 +469,10 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
       (repo) => broadcasts.push({ repo: repo ? { id: repo.id } : null }),
       shared,
     );
-    // The reconciler shares the SAME serializer — the crux of the F5 fix.
+    // The reconciler shares the SAME serializer — the crux of the F5 fix. Its
+    // onSettled tail records the real post-reconcile broadcast (M3: this now
+    // drives the actual host tail under the mutex, instead of hand-simulating
+    // it after the fact — which is what let the I1 stale-tail bug slip through).
     const reconciler = new FolderReconciler(
       discover,
       (fresh) => {
@@ -479,6 +487,14 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
         }
       },
       shared,
+      // onSettled runs UNDER the mutex inside runPass's finally (I1 fix). Mirrors
+      // the host tail: read the registry, persist, broadcast.
+      () => {
+        const activeId = registry.getActiveId();
+        persisted.push(activeId);
+        const repo = activeId ? { id: activeId } : null;
+        broadcasts.push({ repo });
+      },
     );
 
     // Kick off select(B). It runs immediately (chain empty), calls
@@ -522,16 +538,11 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
     calls[0].d.resolve([discovered("/a")]);
     await Promise.all([pSelect, pReconcile]);
 
-    // After reconcile removes B, the host (reconcileFolders) would re-broadcast
-    // the active repo. Simulate that broadcast here to mirror the host path.
-    const finalActive = registry.getActiveId();
-    broadcasts.push({
-      repo: finalActive ? { id: finalActive } : null,
-    });
-
     // NO three-way split: every broadcast agrees with a real registry state, and
     // there is never a divergent `null` that disagrees with the final state.
-    // Sequence is B (from select) then A (from reconcile) — serial, not interleaved.
+    // Sequence is B (from select) then A (from reconcile's onSettled tail) —
+    // serial, not interleaved. The onSettled tail ran UNDER the mutex, so it
+    // could not be re-ordered after a concurrently-queued select (I1).
     const broadcastIds: (string | null)[] = broadcasts.map((b) =>
       b.repo ? b.repo.id : null,
     );
@@ -548,17 +559,155 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
       "no divergent null broadcast (the F5 symptom)",
     );
 
-    // The response activeId from select(B) is B — which WAS the true active at
-    // the moment select completed, and agreed with the registry then. It is not
-    // a divergent value; the later reconcile legitimately moved to A.
-    const selectResult = await pSelect;
-    assert.strictEqual(selectResult.activeId, "/b");
+    // The LAST broadcast agrees with the final registry active (I1 invariant:
+    // the onSettled tail, running under the mutex, lands the final word).
+    assert.strictEqual(broadcastIds.at(-1), registry.getActiveId());
 
     // Final registry state is A (the reconciliation removed B).
     assert.strictEqual(registry.getActiveId(), "/a");
-    // And the response activeId (B) matched the registry at select-completion
-    // time, not a phantom. Persisted agrees with select's broadcast.
-    assert.strictEqual(persisted[0], "/b");
+    // Persisted agrees: select persisted B, then the onSettled tail persisted A
+    // (the post-reconcile active). The LAST persisted value matches the final
+    // registry active — no stale overwrite (I1).
+    assert.deepStrictEqual(persisted, ["/b", "/a"]);
+    assert.strictEqual(persisted.at(-1), registry.getActiveId());
+  });
+
+  it("I1: a select queued while reconcile is mid-runPass cannot interleave its broadcast with the reconcile's onSettled tail", async () => {
+    // The I1 hazard: the post-reconcile persist+broadcast of the active repo
+    // used to run OFF the mutex (in reconcileFolders, after `await reconcile`).
+    // During that tail's `await workspaceState.update`, a `select` queued on the
+    // now-free serializer ran its FULL body (setActive -> persist -> broadcast),
+    // then the tail resumed and broadcast the STALE pre-select active id LAST
+    // and overwrote the select's fresh persisted value.
+    //
+    // Post-fix (onSettled under the mutex): the entire reconcile-side tail runs
+    // inside runPass's finally, which holds the serializer. A select queued
+    // while reconcile is mid-runPass therefore runs STRICTLY AFTER the tail —
+    // their broadcasts are ORDERED (select's lands last), and the LAST broadcast
+    // agrees with the final registry active.
+    //
+    // This is NON-VACUOUS: moving onSettled back off the mutex (e.g. into
+    // reconcileFolders after `await reconcile`) makes this test FAIL — the
+    // onSettled broadcast lands AFTER the select's, so the last broadcast is the
+    // stale pre-select active, disagreeing with the final registry active.
+    const registry = new RepoRegistry();
+    registry.build(
+      [discovered("/a"), discovered("/b"), discovered("/d")],
+      (p) => new GitService(p),
+    );
+    registry.setActive("/a");
+
+    const broadcasts: { repo: { id: string } | null }[] = [];
+    const persisted: (string | null)[] = [];
+
+    const { calls, discover } = controllableDiscover();
+    const shared = new Serializer();
+
+    const coordinator = new RepoSelectionCoordinator(
+      registry,
+      (activeId) => {
+        persisted.push(activeId);
+      },
+      (repo) => broadcasts.push({ repo: repo ? { id: repo.id } : null }),
+      shared,
+    );
+    // Gate the onSettled tail so we can PROVE select stays queued until the tail
+    // (which holds the mutex) fully completes. Without the gate, microtask
+    // draining could advance both the tail and the queued select in one batch,
+    // hiding the ordering. The gate makes "tail runs under the mutex, THEN
+    // select runs" observable step-by-step.
+    const tailGate = deferred<void>();
+    const reconciler = new FolderReconciler(
+      discover,
+      (fresh) => {
+        const nextIds = new Set(fresh.map((d) => d.descriptor.id));
+        for (const old of registry.list()) {
+          if (!nextIds.has(old.id)) registry.remove(old.id);
+        }
+        for (const d of fresh) {
+          if (!registry.get(d.descriptor.id)) {
+            registry.add(d, new GitService(d.paths));
+          }
+        }
+      },
+      shared,
+      // The real host tail: read registry, persist, broadcast — now UNDER the
+      // mutex (I1 fix). The gate lets us park it mid-tail to observe ordering.
+      async () => {
+        await tailGate.promise;
+        const activeId = registry.getActiveId();
+        persisted.push(activeId);
+        broadcasts.push({ repo: activeId ? { id: activeId } : null });
+      },
+    );
+
+    // Start a reconcile that discovers [A, D]. Its discovery parks in the
+    // deferred (reconcile holds the mutex for its whole runPass + onSettled).
+    const pReconcile = reconciler.reconcile([
+      { fsPath: "/a", name: "a" },
+      { fsPath: "/d", name: "d" },
+    ]);
+    await drainMicrotasks();
+    assert.strictEqual(calls.length, 1, "reconcile discovery in flight");
+
+    // WHILE reconcile is mid-runPass (holding the mutex), queue select(D). It
+    // chains on the SAME serializer tail and cannot run until reconcile —
+    // INCLUDING its onSettled tail — fully releases the mutex.
+    const pSelect = coordinator.select("/d");
+    await drainMicrotasks();
+    // select has NOT run yet: still parked behind the in-flight reconcile.
+    assert.strictEqual(
+      registry.getActiveId(),
+      "/a",
+      "select queued behind reconcile; active unchanged",
+    );
+
+    // Complete the reconcile's discovery: applies [A, D], then runPass enters its
+    // finally and calls onSettled — which parks on tailGate (still under the
+    // mutex). select(D) is STILL queued behind this held mutex.
+    calls[0].d.resolve([discovered("/a"), discovered("/d")]);
+    await drainMicrotasks();
+    // The tail has NOT broadcast yet (parked on tailGate); select has NOT run.
+    assert.deepStrictEqual(
+      broadcasts.map((b) => (b.repo ? b.repo.id : null)),
+      [],
+      "onSettled tail parked on gate; no broadcast yet",
+    );
+    assert.strictEqual(
+      registry.getActiveId(),
+      "/a",
+      "select still queued while the tail holds the mutex",
+    );
+
+    // Release the tail. It persists + broadcasts A (the post-reconcile active),
+    // THEN runPass's finally resets running and the serializer releases — and
+    // ONLY THEN does the queued select(D) get the mutex.
+    tailGate.resolve();
+    const selectResult = await pSelect;
+    assert.strictEqual(selectResult.activeId, "/d");
+    await pReconcile;
+
+    // The two broadcasts are ORDERED, not interleaved: A (reconcile tail) then
+    // D (select). The LAST broadcast is D — the select's fresh value — NOT the
+    // stale A. Pre-fix (tail off the mutex, in reconcileFolders after `await
+    // reconcile`) the tail would have been re-ordered to run AFTER select: during
+    // the tail's `await workspaceState.update`, select would have run its full
+    // body (broadcast D), then the tail resumed and broadcast the STALE A last,
+    // disagreeing with the registry. Under the mutex that re-order is impossible.
+    assert.deepStrictEqual(
+      broadcasts.map((b) => (b.repo ? b.repo.id : null)),
+      ["/a", "/d"],
+      "ordered A-then-D; select's broadcast lands last (no stale-tail re-order)",
+    );
+    // The LAST broadcast agrees with the final registry active (the I1 invariant).
+    assert.strictEqual(
+      broadcasts.at(-1)?.repo?.id ?? null,
+      registry.getActiveId(),
+    );
+    assert.strictEqual(registry.getActiveId(), "/d");
+    // The LAST persisted value is D (select's), not a stale A overwrite from the
+    // tail (reconcile tail persisted A first, then select persisted D last).
+    assert.strictEqual(persisted.at(-1), "/d");
   });
 
   it("if reconcile runs first and removes B, a subsequent select(B) fails cleanly (REPO_NOT_FOUND) instead of broadcasting null", async () => {
@@ -624,73 +773,102 @@ describe("Fix-6 (F6a) reconciler failure clears pending (latest wins, not stale 
   function controllableDiscover() {
     const calls: Array<{
       folders: Array<{ fsPath: string; name: string }>;
+      settled: boolean;
       d: {
         promise: Promise<DiscoveredRepo[]>;
         resolve: (v: DiscoveredRepo[]) => void;
+        reject: (reason?: unknown) => void;
       };
     }> = [];
     const discover = (
       folders: Array<{ fsPath: string; name: string }>,
     ): Promise<DiscoveredRepo[]> => {
       const d = deferred<DiscoveredRepo[]>();
-      calls.push({ folders, d });
+      calls.push({ folders, settled: false, d });
       return d.promise;
     };
     return { calls, discover };
   }
 
   it("a failing discovery clears the stashed pending so a later reconcile(latest) lands on latest, not the stale stash", async () => {
-    // F6a reproduction (pre-fix): pass 1 discover() throws while a pending (B)
-    // was stashed. The old catch left pendingFolders=[B] untouched. Then a fresh
-    // reconcile(C) arrived → applied C, then the while-drain applied the stale B
-    // LAST → final state B (stale), not C (latest).
+    // F6a reproduction (pre-fix): pass 1's discover() is IN FLIGHT (running=true)
+    // when reconcile(B) is called → pendingFolders=[B] is stashed. Then pass 1's
+    // discover THROWS. The old catch left pendingFolders=[B] untouched, so the
+    // re-discover loop continued with the stale B, applied it, and landed on B
+    // (stale). A later reconcile(C) arrived too late.
     //
-    // Post-fix: the failing discover catch CLEARS pendingFolders, so the stale B
-    // is dropped; a fresh reconcile(C) starts a new pass and lands on C alone.
-    const boom = new Error("scan permission denied");
+    // Post-fix: the failing-discover catch CLEARS pendingFolders, so the stale B
+    // is dropped; the pass bails. A fresh reconcile(C) then starts a new pass and
+    // lands on C alone.
+    //
+    // This is NON-VACUOUS: reverting the `this.pendingFolders = null` in the
+    // discover catch makes this test FAIL (the stale B is applied and the final
+    // state is B, not C) because the re-discover loop drains the uncleared stash.
     const { calls, discover } = controllableDiscover();
     const applied: DiscoveredRepo[][] = [];
     const appliedIds = () =>
       applied.map((batch) => batch.map((d) => d.descriptor.id));
 
-    // Outer wrapper: the FIRST discovery (pass 1, for [B]) throws; later
-    // discoveries go through controllableDiscover.
-    let firstDiscover = true;
-    const wrappedDiscover = async (
-      folders: Array<{ fsPath: string; name: string }>,
-    ): Promise<DiscoveredRepo[]> => {
-      if (firstDiscover) {
-        firstDiscover = false;
-        throw boom;
-      }
-      return discover(folders);
-    };
-
+    // Pass 1's discover is a controllable deferred that we REJECT, so pass 1
+    // stays in flight (running=true) until we trigger the throw — letting us
+    // stash a real pending during the failing pass.
     const reconciler = new FolderReconciler(
-      wrappedDiscover,
+      discover,
       (repos) => applied.push(repos),
       new Serializer(),
     );
 
-    // Pass 1: reconcile([B]). Its discover will throw.
-    const p1 = reconciler.reconcile([{ fsPath: "/b", name: "b" }]);
-    // While pass 1 is in flight, stash a pending ([B] is what reconcile set
-    // running; to create the F6a window we need a pending stashed DURING the
-    // throwing pass). Drive pass 1 so the throw fires, THEN stash.
+    // Pass 1: reconcile([A]). Its discover registers but does NOT resolve yet
+    // (running=true, parked in `await this.discover`).
+    const p1 = reconciler.reconcile([{ fsPath: "/a", name: "a" }]);
     await drainMicrotasks();
-    // pass 1 has now thrown + been caught; running is reset. Nothing applied.
+    assert.strictEqual(calls.length, 1, "pass 1 discovery is in flight");
+    assert.deepStrictEqual(calls[0].folders, [{ fsPath: "/a", name: "a" }]);
+
+    // WHILE pass 1's discovery is in flight, call reconcile(B). running=true so
+    // this stashes pendingFolders=[B] and returns the in-flight tail (p1).
+    void reconciler.reconcile([{ fsPath: "/b", name: "b" }]);
+
+    // Now make pass 1's discovery THROW. The catch must CLEAR pendingFolders
+    // (the fix) so the stale [B] is never re-discovered.
+    calls[0].settled = true;
+    calls[0].d.reject(new Error("scan permission denied"));
+    await drainMicrotasks();
+    // pass 1 has thrown + been caught; running is reset; nothing applied.
     await p1;
     assert.deepStrictEqual(appliedIds(), [], "throwing pass applied nothing");
 
-    // Now a fresh reconcile(C) arrives. running is false → new in-flight pass.
-    const p2 = reconciler.reconcile([{ fsPath: "/c", name: "c" }]);
+    // A fresh reconcile(C) arrives. running is false → new in-flight pass.
+    const p3 = reconciler.reconcile([{ fsPath: "/c", name: "c" }]);
     await drainMicrotasks();
-    assert.ok(calls.length >= 1, "fresh discovery for C was issued");
-    calls[0].d.resolve([discovered("/c")]);
-    await p2;
+    assert.ok(calls.length >= 2, "fresh discovery for C was issued");
+
+    // Resolve EVERY outstanding discovery the pass requests, echoing the folders
+    // it was asked for (so any stale re-discover the pre-fix bug triggers also
+    // completes, applying its stale result — making the divergence a crisp
+    // assertion failure rather than a timeout). Under post-fix only the [C]
+    // discovery is requested; under pre-fix (clear disabled) the lingering stale
+    // [B] pending makes runPass discard [C] and re-discover [B].
+    const settleAllDiscoveries = async () => {
+      // Bounded: each resolve either applies + breaks (no pending) or re-discovers
+      // once; under both fix and pre-fix the loop terminates within a couple of
+      // iterations. The cap is a guard against an accidental spin.
+      for (let i = 0; i < 8; i++) {
+        await drainMicrotasks();
+        const pending = calls.filter((c) => !c.settled);
+        if (pending.length === 0) break;
+        for (const c of pending) {
+          c.settled = true;
+          c.d.resolve(c.folders.map((f) => discovered(f.fsPath)));
+        }
+      }
+    };
+    await settleAllDiscoveries();
+    await p3;
 
     // Final applied state is C (latest). The stale [B] was NEVER applied —
-    // pre-fix it would have been drained last, landing on B.
+    // pre-fix (catch did not clear pending) the re-discover loop would have
+    // continued with [B] after the throw, applied it, and landed on B.
     assert.deepStrictEqual(
       appliedIds(),
       [["/c"]],

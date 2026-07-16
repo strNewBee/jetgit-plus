@@ -181,6 +181,20 @@ export class FolderReconciler {
     ) => Promise<DiscoveredRepo[]>,
     private readonly applyDiscovered: (repos: DiscoveredRepo[]) => void,
     private readonly serializer: Serializer,
+    /**
+     * Fix-5 revision (I1): optional hook invoked at the end of EVERY `runPass`
+     * — including the failure path — UNDER the shared serializer (before
+     * `running` resets and before the mutex releases). The host uses it to run
+     * the post-reconcile persist + broadcast of the active repo INSIDE the same
+     * critical section that `select` uses, so a concurrently-queued `select`
+     * cannot interleave its own persist/broadcast between the reconciler's
+     * registry mutation and this tail (which would otherwise let the stale
+     * pre-select active id land as the LAST broadcast / persisted value). The
+     * closure must NOT itself acquire the serializer (no `select`/`reconcile`
+     * calls) — it only reads the registry + persists + broadcasts — so no
+     * nested acquisition / deadlock.
+     */
+    private readonly onSettled?: () => Promise<void> | void,
   ) {}
 
   /**
@@ -257,6 +271,23 @@ export class FolderReconciler {
         break;
       }
     } finally {
+      // Fix-5 revision (I1): run the post-reconcile tail (persist + broadcast of
+      // the active repo) UNDER the shared serializer, before the mutex releases.
+      // runPass is invoked via `this.serializer.chain(() => this.runPass(...))`,
+      // so its entire body — including this finally — holds the mutex. A
+      // concurrently-queued `select` therefore cannot run between the registry
+      // mutation above and this tail, eliminating the stale-last-broadcast /
+      // stale-persist-overwrite window. The tail is awaited even on the failure
+      // path so a pass that discovered+applied partially still re-broadcasts a
+      // consistent active repo before yielding.
+      try {
+        await this.onSettled?.();
+      } catch (err) {
+        console.error(
+          "[jetgit-plus] folder reconcile onSettled failed:",
+          err instanceof Error ? (err.stack ?? err) : err,
+        );
+      }
       this.running = false;
     }
   }
