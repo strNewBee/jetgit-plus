@@ -13,6 +13,14 @@ export class ConflictsManager {
   openConflictsPanel(repoId: string): void {
     if (this.panel) {
       this.panel.reveal();
+      // Re-send init data. The panel is reused (not recreated), so main.tsx
+      // never re-runs; this re-init is what rebinds the bridge to the new repo
+      // via bindRepo(payload.repoId). Mirrors pushPanel/rollbackPanel.
+      this.panel.webview.postMessage({
+        type: "event",
+        event: "conflictsPanelInit",
+        data: { repoId },
+      });
       return;
     }
 

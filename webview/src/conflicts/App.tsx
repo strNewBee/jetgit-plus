@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge } from "../shared/bridge";
 import {
   buildFileTree,
@@ -10,8 +10,8 @@ import {
   type SelectionMode,
   useModifierClickSelection,
 } from "../shared/hooks/useModifierClickSelection";
-import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
 import { usePreventSelect } from "../shared/hooks/usePreventSelect";
+import { useRepoBoundOperation } from "../shared/hooks/useRepoBoundOperation";
 import type { DiffFile } from "../shared/types/git";
 
 interface MergeState {
@@ -42,18 +42,50 @@ export function ConflictsApp() {
 
   const containerRef = usePreventSelect<HTMLDivElement>();
 
+  // Track mutating in a ref so the re-init event listener can read the latest
+  // value without re-subscribing on every render.
+  const mutatingRef = useRef(mutating);
+  mutatingRef.current = mutating;
+
+  // `loadData` needs the hook's bound `request`, and the hook needs `loadData`
+  // (well, a follow callback) as its idle-follow callback. Break the cycle with
+  // a ref: the hook calls a stable wrapper that delegates to the latest
+  // follow-path via the ref, so `loadData` can be defined AFTER the hook (and
+  // thus use its `request`).
+  const onFollowRef = useRef<(() => Promise<void>) | null>(null);
+  const onFollowRepo = useCallback((_repoId: string | null) => {
+    // Delegate to the latest follow-path; no-op if it hasn't been assigned yet.
+    // The repoId is ignored here because the bound `request` already carries
+    // the authoritative repo (the hook bumped bridge context before calling).
+    return onFollowRef.current?.();
+  }, []);
+
+  // Authoritative repo binding + bound request. `busy = loading || mutating`
+  // (Accept/Merge are mutating → idle-follow is suppressed during them, so an
+  // active-repo change can't rebind the bridge away mid-mutation). Every
+  // repo-bound request goes through `request` so it carries the panel's
+  // authoritative repoId.
+  const { request, bindRepo } = useRepoBoundOperation(
+    loading || mutating,
+    onFollowRepo,
+  );
+
+  // Load merge state + conflict files for the bound repo. Used for the initial
+  // mount, the idle-follow path, and the host-driven re-init. Every request
+  // goes through the bound `request` so it carries the panel's authoritative
+  // repoId.
   const loadData = useCallback(async () => {
     try {
       const [state, files] = await Promise.all([
-        bridge.request("getMergeState") as Promise<MergeState>,
-        bridge.request("getConflictFiles") as Promise<string[]>,
+        request("getMergeState") as Promise<MergeState>,
+        request("getConflictFiles") as Promise<string[]>,
       ]);
       setMergeState(state);
       setConflictFiles(files);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [request]);
 
   useEffect(() => {
     loadData();
@@ -62,12 +94,38 @@ export function ConflictsApp() {
   // Idle-follow / execution-bound repo lifecycle. While loading or mutating,
   // active-repo changes are deferred; the latest pending repo is applied once
   // idle (clearing the selection and reloading conflict data for the new repo).
-  useOperationRepoBinding(loading || mutating, async () => {
+  // Wired via the ref so it can use the hook's bound `request` indirectly.
+  onFollowRef.current = async () => {
     setSelectedFiles([]);
     setLastSelectedFile(null);
     setLoading(true);
     await loadData();
-  });
+  };
+
+  // Listen for re-init events (when panel is reused). Ignored while an Accept /
+  // Merge is in progress so the in-flight mutation is not disturbed. This is
+  // the authoritative rebind path: bindRepo(payload.repoId) sets the panel's
+  // repo (and bumps the bridge context synchronously) so subsequent requests
+  // target the newly revealed repo, not whatever the ambient context was bound
+  // to. The conflict list is reloaded through the bound request (NOT the raw
+  // payload) so the displayed files are guaranteed to match the bound repo.
+  useEffect(() => {
+    return bridge.onEvent((event, data) => {
+      if (event !== "conflictsPanelInit") return;
+      if (mutatingRef.current) return;
+      const payload = data as { repoId?: string };
+      // Rebind to the host-supplied repo FIRST (bumps generation so any stale
+      // in-flight response from the previous repo is dropped), then reload via
+      // the bound request.
+      if (payload.repoId !== undefined) {
+        bindRepo(payload.repoId);
+      }
+      setSelectedFiles([]);
+      setLastSelectedFile(null);
+      setLoading(true);
+      void loadData();
+    });
+  }, [loadData, bindRepo]);
 
   // Convert string[] to DiffFile[]
   const diffFiles: DiffFile[] = useMemo(
@@ -143,7 +201,7 @@ export function ConflictsApp() {
     setMutating(true);
     try {
       for (const filePath of selectedFiles) {
-        await bridge.request("acceptOurs", { filePath });
+        await request("acceptOurs", { filePath });
       }
       setConflictFiles((prev) =>
         prev.filter((f) => !selectedFiles.includes(f)),
@@ -152,13 +210,13 @@ export function ConflictsApp() {
     } finally {
       setMutating(false);
     }
-  }, [selectedFiles]);
+  }, [selectedFiles, request]);
 
   const handleAcceptTheirs = useCallback(async () => {
     setMutating(true);
     try {
       for (const filePath of selectedFiles) {
-        await bridge.request("acceptTheirs", { filePath });
+        await request("acceptTheirs", { filePath });
       }
       setConflictFiles((prev) =>
         prev.filter((f) => !selectedFiles.includes(f)),
@@ -167,11 +225,14 @@ export function ConflictsApp() {
     } finally {
       setMutating(false);
     }
-  }, [selectedFiles]);
+  }, [selectedFiles, request]);
 
-  const openMergeEditor = useCallback(async (filePath: string) => {
-    await bridge.request("openMergeEditor", { file: filePath });
-  }, []);
+  const openMergeEditor = useCallback(
+    async (filePath: string) => {
+      await request("openMergeEditor", { file: filePath });
+    },
+    [request],
+  );
 
   const handleMerge = useCallback(async () => {
     if (selectedFiles.length <= 0) return;
