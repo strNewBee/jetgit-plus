@@ -17,11 +17,16 @@ export class PushPanel {
   open(repoId: string, branchName: string, remoteName = "origin"): void {
     if (this.panel) {
       this.panel.reveal();
-      // Re-send init data
+      // Re-send init data. The panel is reused (not recreated), so main.tsx
+      // never re-runs; this re-init is what rebinds the bridge to the new repo
+      // via bindRepo(payload.repoId). The remote key is `remote` to match the
+      // create-time `data-remote` dataset (and the frontend's `payload.remote`
+      // read) — previously this posted `remoteName`, which the frontend never
+      // read, silently falling back to "origin".
       this.panel.webview.postMessage({
         type: "event",
         event: "pushPanelInit",
-        data: { repoId, branchName, remoteName },
+        data: { repoId, branchName, remote: remoteName },
       });
       return;
     }

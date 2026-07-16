@@ -5,7 +5,7 @@ import CodiconListTree from "~icons/codicon/list-tree";
 import { bridge } from "../shared/bridge";
 import { CommitInfo } from "../shared/components/CommitInfo";
 import { FileTree } from "../shared/components/FileTree";
-import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
+import { useRepoBoundOperation } from "../shared/hooks/useRepoBoundOperation";
 import type { BranchInfo, Commit, DiffFile } from "../shared/types/git";
 import { RemoteBranchSelector } from "./components/RemoteBranchSelector";
 import { useDraggableDivider } from "./hooks/useDraggableDivider";
@@ -73,7 +73,7 @@ export function PushApp() {
   const initialRemote = root?.dataset.remote ?? "origin";
 
   // branchName is now state so it can be reloaded when the active repo changes
-  // (via useOperationRepoBinding). It is seeded from the host-supplied dataset
+  // (via useRepoBoundOperation). It is seeded from the host-supplied dataset
   // on first mount. The editable remote target (targetRemote) is derived from
   // the current branch's upstream and updated alongside branchName.
   const [branchName, setBranchName] = useState(initialBranch);
@@ -106,10 +106,43 @@ export function PushApp() {
   const pushingRef = useRef(pushing);
   pushingRef.current = pushing;
 
+  // Snapshot of the push context captured at the moment a push was rejected.
+  // The recovery handlers (rebase/merge-and-push) use THESE captured values via
+  // the bound `request` so they target the repo/branch that was rejected even
+  // if the active repo changed while the rejected dialog was open. `null` while
+  // no recovery is pending.
+  const rejectedContextRef = useRef<{
+    branchName: string;
+    targetRemote: string;
+    targetBranch: string;
+  } | null>(null);
+
+  // `loadRepo` needs the hook's bound `request`, and the hook needs `loadRepo`
+  // as its idle-follow callback. Break the cycle with a ref: the hook calls a
+  // stable wrapper that delegates to the latest `loadRepo` via the ref, so
+  // `loadRepo` can be defined AFTER the hook (and thus use its `request`).
+  const loadRepoRef = useRef<(() => Promise<void>) | null>(null);
+  const onFollowRepo = useCallback((_repoId: string | null) => {
+    // Delegate to the latest loadRepo; no-op if it hasn't been assigned yet.
+    // The repoId is ignored here because the bound `request` already carries
+    // the authoritative repo (the hook bumped bridge context before calling).
+    return loadRepoRef.current?.();
+  }, []);
+
+  // Authoritative repo binding + bound request. The busy flag includes the
+  // rejected dialog so idle-follow stays suppressed while the user decides how
+  // to recover — otherwise switching the active repo mid-dialog would re-bind
+  // the bridge away from the rejected repo before the recovery handler runs.
+  // `busy = pushing || pushRejected.show`.
+  const { request, bindRepo } = useRepoBoundOperation(
+    pushing || pushRejected.show,
+    onFollowRepo,
+  );
+
   const loadAheadCommits = useCallback(
     async (branch: string, remote: string) => {
       try {
-        const result = (await bridge.request("getAheadCommits", {
+        const result = (await request("getAheadCommits", {
           branchName: branch,
           remote,
         })) as { commits: Commit[] } | null;
@@ -124,16 +157,17 @@ export function PushApp() {
         console.error("Failed to load ahead commits:", err);
       }
     },
-    [],
+    // `request` is stable from the hook (useCallback, [] deps), but it is a
+    // render-scoped binding, so list it for correctness if it ever changes.
+    [request],
   );
 
   // (Re)load repo-specific data: current branch, derived remote, ahead commits.
-  // Used for the initial mount (via the binding hook's effect-free initial path
-  // is NOT triggered — we explicitly load below) and whenever the active repo
-  // changes while idle.
+  // Used whenever the active repo changes while idle. Every request goes
+  // through the bound `request` so it carries the panel's authoritative repoId.
   const loadRepo = useCallback(async () => {
     try {
-      const result = (await bridge.request("getBranches")) as
+      const result = (await request("getBranches")) as
         | BranchInfo[]
         | { status: string }
         | null;
@@ -160,11 +194,9 @@ export function PushApp() {
     } catch (err) {
       console.error("Failed to load repo for push panel:", err);
     }
-  }, [loadAheadCommits]);
-
-  // Idle-follow / execution-bound repo lifecycle: while a push is running,
-  // active-repo changes are deferred and only the latest is applied when idle.
-  useOperationRepoBinding(pushing, loadRepo);
+  }, [request, loadAheadCommits]);
+  // Wire the ref so the hook's onFollow wrapper reaches the real loadRepo.
+  loadRepoRef.current = loadRepo;
 
   // Initial load of ahead commits for the host-supplied branch/remote.
   useEffect(() => {
@@ -173,7 +205,10 @@ export function PushApp() {
   }, [initialBranch, initialRemote, loadAheadCommits]);
 
   // Listen for re-init events (when panel is reused). Ignored while a push is
-  // in progress so the in-flight operation is not disturbed.
+  // in progress so the in-flight operation is not disturbed. This is the
+  // authoritative rebind path: bindRepo(payload.repoId) sets the panel's repo
+  // (and bumps the bridge context synchronously) so subsequent requests target
+  // the newly revealed repo, not whatever the ambient context was bound to.
   useEffect(() => {
     return bridge.onEvent((event, data) => {
       if (event !== "pushPanelInit") return;
@@ -183,6 +218,12 @@ export function PushApp() {
         remote?: string;
         repoId?: string;
       };
+      // Rebind to the host-supplied repo FIRST (bumps generation so any stale
+      // in-flight response from the previous repo is dropped), then apply the
+      // branch/remote and reload ahead commits through the bound request.
+      if (payload.repoId !== undefined) {
+        bindRepo(payload.repoId);
+      }
       const branch = payload.branchName ?? "";
       const remote = payload.remote ?? "origin";
       setBranchName(branch);
@@ -193,7 +234,7 @@ export function PushApp() {
       setCollapsed({});
       void loadAheadCommits(branch, remote);
     });
-  }, [loadAheadCommits]);
+  }, [loadAheadCommits, bindRepo]);
 
   useEffect(() => {
     if (!selectedHash) {
@@ -202,7 +243,7 @@ export function PushApp() {
     }
     async function load() {
       try {
-        const result = (await bridge.request("getCommitRangeFiles", {
+        const result = (await request("getCommitRangeFiles", {
           hashes: [selectedHash],
         })) as DiffFile[] | null;
         setFiles(result ?? []);
@@ -211,14 +252,14 @@ export function PushApp() {
       }
     }
     load();
-  }, [selectedHash]);
+  }, [selectedHash, request]);
 
   const handlePush = useCallback(
     async (force = false) => {
       setPushing(true);
       setError(null);
       try {
-        const result = (await bridge.request("executePush", {
+        const result = (await request("executePush", {
           branchName,
           remote: targetRemote,
           targetBranch: targetBranch,
@@ -229,86 +270,118 @@ export function PushApp() {
         const message = isUpToDate
           ? "Everything is up to date"
           : `Pushed ${commits.length} commit${commits.length !== 1 ? "s" : ""} to ${targetRemote}/${targetBranch}`;
-        // Show VS Code native notification then close
-        bridge.request("showInfoNotification", { message }).catch(() => {});
+        // Show VS Code native notification then close. These are repo-agnostic
+        // control-plane calls → { scope: "global" } (no repoId attached).
+        bridge
+          .request("showInfoNotification", { message }, { scope: "global" })
+          .catch(() => {});
         setTimeout(() => {
-          bridge.request("closePushPanel");
+          bridge.request("closePushPanel", {}, { scope: "global" });
         }, 500);
       } catch (err) {
         setPushing(false);
         const msg = err instanceof Error ? err.message : String(err);
-        // Detect push rejected due to non-fast-forward
+        // Detect push rejected due to non-fast-forward. Capture the push
+        // context BEFORE flipping pushing=false so the recovery handlers target
+        // exactly the repo/branch that was rejected even if the active repo
+        // later changes while the dialog is open.
         if (
           msg.includes("non-fast-forward") ||
           msg.includes("[rejected]") ||
           msg.includes("failed to push some refs")
         ) {
+          rejectedContextRef.current = {
+            branchName,
+            targetRemote,
+            targetBranch,
+          };
           setPushRejected({ show: true, branchName });
           setError(msg);
         } else {
           setError(msg);
           bridge
-            .request("showErrorNotification", { message: msg })
+            .request(
+              "showErrorNotification",
+              { message: msg },
+              {
+                scope: "global",
+              },
+            )
             .catch(() => {});
         }
       }
     },
-    [branchName, targetRemote, targetBranch, commits.length],
+    [branchName, targetRemote, targetBranch, commits.length, request],
   );
 
   const handleRebaseAndPush = useCallback(async () => {
+    const ctx = rejectedContextRef.current;
+    if (!ctx) return;
     setPushRejected({ show: false, branchName: "" });
     setError(null);
     setPushing(true);
     try {
-      await bridge.request("pullRebase", { branchName });
-      // After successful rebase, retry push
-      await bridge.request("executePush", {
-        branchName,
-        remote: targetRemote,
-        targetBranch: targetBranch,
+      await request("pullRebase", { branchName: ctx.branchName });
+      // After successful rebase, retry push using the CAPTURED target so the
+      // recovery stays on the rejected repo/branch.
+      await request("executePush", {
+        branchName: ctx.branchName,
+        remote: ctx.targetRemote,
+        targetBranch: ctx.targetBranch,
         force: false,
       });
+      rejectedContextRef.current = null;
       setPushing(false);
-      const message = `Rebased and pushed to ${targetRemote}/${targetBranch}`;
-      bridge.request("showInfoNotification", { message }).catch(() => {});
+      const message = `Rebased and pushed to ${ctx.targetRemote}/${ctx.targetBranch}`;
+      bridge
+        .request("showInfoNotification", { message }, { scope: "global" })
+        .catch(() => {});
       setTimeout(() => {
-        bridge.request("closePushPanel");
+        bridge.request("closePushPanel", {}, { scope: "global" });
       }, 500);
     } catch (err) {
       setPushing(false);
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+      bridge
+        .request("showErrorNotification", { message: msg }, { scope: "global" })
+        .catch(() => {});
     }
-  }, [branchName, targetRemote, targetBranch]);
+  }, [request]);
 
   const handleMergeAndPush = useCallback(async () => {
+    const ctx = rejectedContextRef.current;
+    if (!ctx) return;
     setPushRejected({ show: false, branchName: "" });
     setError(null);
     setPushing(true);
     try {
-      await bridge.request("pullMerge", { branchName });
-      // After successful merge, retry push
-      await bridge.request("executePush", {
-        branchName,
-        remote: targetRemote,
-        targetBranch: targetBranch,
+      await request("pullMerge", { branchName: ctx.branchName });
+      // After successful merge, retry push using the CAPTURED target.
+      await request("executePush", {
+        branchName: ctx.branchName,
+        remote: ctx.targetRemote,
+        targetBranch: ctx.targetBranch,
         force: false,
       });
+      rejectedContextRef.current = null;
       setPushing(false);
-      const message = `Merged and pushed to ${targetRemote}/${targetBranch}`;
-      bridge.request("showInfoNotification", { message }).catch(() => {});
+      const message = `Merged and pushed to ${ctx.targetRemote}/${ctx.targetBranch}`;
+      bridge
+        .request("showInfoNotification", { message }, { scope: "global" })
+        .catch(() => {});
       setTimeout(() => {
-        bridge.request("closePushPanel");
+        bridge.request("closePushPanel", {}, { scope: "global" });
       }, 500);
     } catch (err) {
       setPushing(false);
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+      bridge
+        .request("showErrorNotification", { message: msg }, { scope: "global" })
+        .catch(() => {});
     }
-  }, [branchName, targetRemote, targetBranch]);
+  }, [request]);
 
   const handleBranchSelect = useCallback((branch: string) => {
     setTargetBranch(branch);
@@ -331,6 +404,13 @@ export function PushApp() {
 
   const handleLabelClick = useCallback(() => {
     setSelectorOpen((prev) => !prev);
+  }, []);
+
+  // Clear the captured recovery context when the rejected dialog is dismissed
+  // (Cancel) so a stale snapshot can't be reused by a later recovery attempt.
+  const handleRejectedCancel = useCallback(() => {
+    rejectedContextRef.current = null;
+    setPushRejected({ show: false, branchName: "" });
   }, []);
 
   const selectedCommit = commits.find((c) => c.hash === selectedHash);
@@ -487,7 +567,7 @@ export function PushApp() {
                       selectedFiles={[]}
                       onFileClick={(_e, file) => {
                         if (selectedHash) {
-                          bridge.request("openDiffEditor", {
+                          request("openDiffEditor", {
                             commit: selectedHash,
                             filePath: file.newPath || file.oldPath,
                             file,
@@ -525,7 +605,9 @@ export function PushApp() {
         <button
           type="button"
           className="push-btn push-btn-secondary"
-          onClick={() => bridge.request("closePushPanel")}
+          onClick={() =>
+            bridge.request("closePushPanel", {}, { scope: "global" })
+          }
           disabled={pushing}
         >
           Cancel
@@ -617,7 +699,7 @@ export function PushApp() {
           branchName={pushRejected.branchName}
           onRebase={handleRebaseAndPush}
           onMerge={handleMergeAndPush}
-          onCancel={() => setPushRejected({ show: false, branchName: "" })}
+          onCancel={handleRejectedCancel}
         />
       )}
     </div>
