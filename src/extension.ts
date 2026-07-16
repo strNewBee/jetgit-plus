@@ -1824,6 +1824,7 @@ export async function activate(context: vscode.ExtensionContext) {
           repoRegistry.add(d, new GitService(d.paths));
         }
       }
+      registerRepoWatchers(); // create/dispose watchers to match registry state
       broadcastRepos();
       const activeId = repoRegistry.getActiveId();
       await context.workspaceState.update("jetgit.activeRepoId", activeId);
@@ -1836,16 +1837,31 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // 7. GitWatcher (constructed from the active runtime; Task 6 makes it per-repo)
-  const watcherRuntime = repoRegistry.getActive();
-  if (watcherRuntime) {
-    const watcher = new GitWatcher(
-      watcherRuntime.descriptor.rootPath,
-      messageRouter,
-      watcherRuntime.gitService.cache,
-    );
-    context.subscriptions.push(watcher);
-  }
+  // 7. GitWatcher — one per registered repo, disposed on removal.
+  const watchers = new Map<string, GitWatcher>(); // repoId → watcher
+  const registerRepoWatchers = () => {
+    for (const desc of repoRegistry.list()) {
+      if (watchers.has(desc.id)) continue;
+      const runtime = repoRegistry.get(desc.id);
+      if (!runtime) continue;
+      const w = new GitWatcher(
+        runtime.paths,
+        runtime.descriptor.rootPath,
+        messageRouter,
+        runtime.gitService.cache,
+        desc.id,
+      );
+      watchers.set(desc.id, w);
+      context.subscriptions.push(w);
+    }
+    for (const [id, w] of watchers) {
+      if (!repoRegistry.get(id)) {
+        w.dispose();
+        watchers.delete(id);
+      }
+    }
+  };
+  registerRepoWatchers();
 
   // 8. Status bar item to quickly open the panel
   const statusBarItem = vscode.window.createStatusBarItem(

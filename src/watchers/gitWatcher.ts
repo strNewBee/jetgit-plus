@@ -1,117 +1,96 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { GitCache } from "../git/cache";
+import type { RepositoryPaths } from "../git/repoRegistry";
 import type { MessageRouter } from "../messages/messageRouter";
 
 type Scope = "all" | "branches" | "status" | "mergeState" | "log";
+
+export interface GitWatchSpec {
+  basePath: string;
+  pattern: string;
+  scope: Scope;
+}
+
+/**
+ * Build file-watch specs routing worktree-local state to the repo's real gitDir
+ * (so a worktree watches its own per-worktree files) and shared refs to commonDir
+ * (so a worktree also observes the shared repository state). Identical
+ * basePath+pattern pairs are deduplicated (normal repos where gitDir===commonDir
+ * get exactly one watcher per file).
+ */
+export function buildGitWatchSpecs(paths: RepositoryPaths): GitWatchSpec[] {
+  const specs: GitWatchSpec[] = [
+    { basePath: paths.gitDir, pattern: "HEAD", scope: "all" },
+    { basePath: paths.gitDir, pattern: "index", scope: "status" },
+    { basePath: paths.gitDir, pattern: "MERGE_HEAD", scope: "mergeState" },
+    {
+      basePath: paths.gitDir,
+      pattern: "CHERRY_PICK_HEAD",
+      scope: "mergeState",
+    },
+    { basePath: paths.gitDir, pattern: "rebase-merge/**", scope: "mergeState" },
+    { basePath: paths.gitDir, pattern: "rebase-apply/**", scope: "mergeState" },
+    { basePath: paths.gitDir, pattern: "COMMIT_EDITMSG", scope: "log" },
+    { basePath: paths.gitDir, pattern: "config.worktree", scope: "all" },
+    { basePath: paths.commonDir, pattern: "refs/heads/**", scope: "branches" },
+    {
+      basePath: paths.commonDir,
+      pattern: "refs/remotes/**",
+      scope: "branches",
+    },
+    { basePath: paths.commonDir, pattern: "refs/tags/**", scope: "branches" },
+    { basePath: paths.commonDir, pattern: "packed-refs", scope: "branches" },
+    { basePath: paths.commonDir, pattern: "config", scope: "all" },
+  ];
+  const seen = new Set<string>();
+  return specs.filter((spec) => {
+    const key = `${spec.basePath}\0${spec.pattern}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 export class GitWatcher implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private debounceTimers = new Map<Scope, ReturnType<typeof setTimeout>>();
 
   constructor(
-    private readonly workspaceRoot: string,
+    private readonly paths: RepositoryPaths,
+    private readonly workTreeRoot: string,
     private readonly messageRouter: MessageRouter,
     private readonly cache: GitCache,
+    private readonly repoId: string,
   ) {
     this.setupFileWatchers();
     this.setupEditorWatchers();
   }
 
   private setupFileWatchers(): void {
-    const gitBase = vscode.Uri.file(`${this.workspaceRoot}/.git`);
-
-    // .git/HEAD → all
-    const headWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "HEAD"),
-    );
-    headWatcher.onDidChange(() => this.notify("all"));
-    headWatcher.onDidCreate(() => this.notify("all"));
-    headWatcher.onDidDelete(() => this.notify("all"));
-    this.disposables.push(headWatcher);
-
-    // .git/refs/heads/** → branches
-    const headsWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "refs/heads/**"),
-    );
-    headsWatcher.onDidChange(() => this.notify("branches"));
-    headsWatcher.onDidCreate(() => this.notify("branches"));
-    headsWatcher.onDidDelete(() => this.notify("branches"));
-    this.disposables.push(headsWatcher);
-
-    // .git/refs/remotes/** → branches
-    const remotesWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "refs/remotes/**"),
-    );
-    remotesWatcher.onDidChange(() => this.notify("branches"));
-    remotesWatcher.onDidCreate(() => this.notify("branches"));
-    remotesWatcher.onDidDelete(() => this.notify("branches"));
-    this.disposables.push(remotesWatcher);
-
-    // .git/refs/tags/** → branches (tags group)
-    const tagsWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "refs/tags/**"),
-    );
-    tagsWatcher.onDidChange(() => this.notify("branches"));
-    tagsWatcher.onDidCreate(() => this.notify("branches"));
-    tagsWatcher.onDidDelete(() => this.notify("branches"));
-    this.disposables.push(tagsWatcher);
-
-    // .git/index → status
-    const indexWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "index"),
-    );
-    indexWatcher.onDidChange(() => this.notify("status"));
-    this.disposables.push(indexWatcher);
-
-    // .git/MERGE_HEAD → mergeState
-    const mergeHeadWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "MERGE_HEAD"),
-    );
-    mergeHeadWatcher.onDidChange(() => this.notify("mergeState"));
-    mergeHeadWatcher.onDidCreate(() => this.notify("mergeState"));
-    mergeHeadWatcher.onDidDelete(() => this.notify("mergeState"));
-    this.disposables.push(mergeHeadWatcher);
-
-    // .git/CHERRY_PICK_HEAD → mergeState (cherry-pick state)
-    const cherryPickHeadWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "CHERRY_PICK_HEAD"),
-    );
-    cherryPickHeadWatcher.onDidChange(() => this.notify("mergeState"));
-    cherryPickHeadWatcher.onDidCreate(() => this.notify("mergeState"));
-    cherryPickHeadWatcher.onDidDelete(() => this.notify("mergeState"));
-    this.disposables.push(cherryPickHeadWatcher);
-
-    // .git/rebase-merge/** → mergeState (rebase state)
-    const rebaseMergeWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "rebase-merge/**"),
-    );
-    rebaseMergeWatcher.onDidChange(() => this.notify("mergeState"));
-    rebaseMergeWatcher.onDidCreate(() => this.notify("mergeState"));
-    rebaseMergeWatcher.onDidDelete(() => this.notify("mergeState"));
-    this.disposables.push(rebaseMergeWatcher);
-
-    // .git/rebase-apply/** → mergeState (rebase state)
-    const rebaseApplyWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "rebase-apply/**"),
-    );
-    rebaseApplyWatcher.onDidChange(() => this.notify("mergeState"));
-    rebaseApplyWatcher.onDidCreate(() => this.notify("mergeState"));
-    rebaseApplyWatcher.onDidDelete(() => this.notify("mergeState"));
-    this.disposables.push(rebaseApplyWatcher);
-
-    // .git/COMMIT_EDITMSG → log
-    const commitMsgWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(gitBase, "COMMIT_EDITMSG"),
-    );
-    commitMsgWatcher.onDidChange(() => this.notify("log"));
-    commitMsgWatcher.onDidCreate(() => this.notify("log"));
-    this.disposables.push(commitMsgWatcher);
+    for (const spec of buildGitWatchSpecs(this.paths)) {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(spec.basePath, spec.pattern),
+      );
+      watcher.onDidChange(() => this.notify(spec.scope));
+      watcher.onDidCreate(() => this.notify(spec.scope));
+      watcher.onDidDelete(() => this.notify(spec.scope));
+      this.disposables.push(watcher);
+    }
   }
 
   private setupEditorWatchers(): void {
-    // Save → status refresh
     this.disposables.push(
-      vscode.workspace.onDidSaveTextDocument(() => this.notify("status")),
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (document.uri.scheme !== "file") return;
+        const relative = path.relative(this.workTreeRoot, document.uri.fsPath);
+        if (
+          relative === "" ||
+          (!relative.startsWith("..") && !path.isAbsolute(relative))
+        ) {
+          this.notify("status");
+        }
+      }),
     );
   }
 
@@ -127,7 +106,10 @@ export class GitWatcher implements vscode.Disposable {
       setTimeout(() => {
         this.debounceTimers.delete(scope);
         this.cache.invalidate();
-        this.messageRouter.broadcastEvent("gitStateChanged", { scope });
+        this.messageRouter.broadcastEvent("gitStateChanged", {
+          scope,
+          repoId: this.repoId,
+        });
       }, 300),
     );
   }
