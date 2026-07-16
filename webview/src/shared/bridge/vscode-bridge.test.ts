@@ -24,6 +24,19 @@ describe("bridge repo context + stale drop", () => {
     expect((posted[0] as { repoId?: string }).repoId).toBe("/r1");
   });
 
+  it("a per-request repoId overrides the ambient context", () => {
+    const posted: unknown[] = [];
+    installAcquire((m) => posted.push(m));
+    const bridge = createVSCodeBridge();
+    bridge.setRepoContext("A");
+    // Explicit override wins over ambient "A".
+    void bridge.request("getX", {}, { repoId: "B" });
+    // A plain request with no override uses ambient "A".
+    void bridge.request("getX");
+    expect((posted[0] as { repoId?: string }).repoId).toBe("B");
+    expect((posted[1] as { repoId?: string }).repoId).toBe("A");
+  });
+
   it("drops responses whose generation is stale", async () => {
     const posted: unknown[] = [];
     let deliver: ((m: unknown) => void) | null = null;

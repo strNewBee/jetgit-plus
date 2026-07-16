@@ -143,10 +143,23 @@ export type CommandType =
  * Request scope. "repo" (default) binds the call to the active repo context;
  * "global" opts out of repo-binding for control-plane calls (e.g. getRepos,
  * selectRepo) so they survive a repo switch without a hard-coded command list.
+ *
+ * `repoId` is an explicit per-request override: when set, the bridge stamps the
+ * message with this repo instead of its ambient `currentRepoId`. This is the
+ * correctness guarantee operation panels use so a request always targets the
+ * repo the UI is showing, regardless of ambient context.
  */
 export interface BridgeRequestOptions {
   scope?: "repo" | "global";
+  repoId?: string;
 }
+
+/**
+ * Alias for `BridgeRequestOptions`. Public hook signatures (e.g.
+ * `useRepoBoundOperation`) reference `RequestOptions` so callers don't depend
+ * on the implementation naming. The two types are structurally identical.
+ */
+export type RequestOptions = BridgeRequestOptions;
 
 export interface Bridge {
   request(

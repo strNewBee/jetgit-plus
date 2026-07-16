@@ -29,7 +29,9 @@ export async function bridgeWithProgress(
 
 export type {
   Bridge,
+  BridgeRequestOptions,
   EventMessage,
   RequestMessage,
+  RequestOptions,
   ResponseMessage,
 } from "./types";

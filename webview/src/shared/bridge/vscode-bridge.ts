@@ -75,6 +75,11 @@ export function createVSCodeBridge(): Bridge {
         const id = crypto.randomUUID();
         const globalRequest = options.scope === "global";
         const myGen = globalRequest ? null : generation;
+        // Explicit per-request repoId overrides the ambient context. This is the
+        // guarantee layer: operation panels stamp every request with the repo
+        // the UI is showing, so it can never diverge from ambient state.
+        const effectiveRepo =
+          options.repoId !== undefined ? options.repoId : currentRepoId;
         const timeout = setTimeout(() => {
           pendingRequests.delete(id);
           reject(new Error(`Request '${command}' timed out`));
@@ -97,7 +102,7 @@ export function createVSCodeBridge(): Bridge {
           id,
           command,
           params,
-          ...(!globalRequest && currentRepoId ? { repoId: currentRepoId } : {}),
+          ...(!globalRequest && effectiveRepo ? { repoId: effectiveRepo } : {}),
         };
         vscode.postMessage(msg);
       });
