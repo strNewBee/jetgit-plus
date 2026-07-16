@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createVSCodeBridge } from "./vscode-bridge";
 
 function installAcquire(postMessage: (m: unknown) => void) {
-  (globalThis as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi = () => ({
-    postMessage,
-    getState: () => ({}),
-    setState: () => {},
-  });
+  (globalThis as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
+    () => ({
+      postMessage,
+      getState: () => ({}),
+      setState: () => {},
+    });
 }
 
 describe("bridge repo context + stale drop", () => {
@@ -29,13 +30,21 @@ describe("bridge repo context + stale drop", () => {
     installAcquire((m) => posted.push(m));
     // Capture the window 'message' listener so we can synthesize responses.
     const origAdd = window.addEventListener;
-    window.addEventListener = (((type: string, cb: (e: MessageEvent) => void) => {
-      if (type === "message") deliver = (m: unknown) => cb({ data: m } as MessageEvent);
-    }) as typeof window.addEventListener);
+    window.addEventListener = ((
+      type: string,
+      cb: (e: MessageEvent) => void,
+    ) => {
+      if (type === "message")
+        deliver = (m: unknown) => cb({ data: m } as MessageEvent);
+    }) as typeof window.addEventListener;
 
     const bridge = createVSCodeBridge();
     const p = bridge.request("getBranches");
-    const id = (posted.find((m) => (m as { type?: string }).type === "request") as { id: string }).id;
+    const id = (
+      posted.find((m) => (m as { type?: string }).type === "request") as {
+        id: string;
+      }
+    ).id;
     bridge.setRepoContext("/r2"); // bump generation → previous request is now stale
     deliver!({ type: "response", id, success: true, data: [] });
 
@@ -48,9 +57,12 @@ describe("bridge repo context + stale drop", () => {
     let deliver!: (m: unknown) => void;
     installAcquire((m) => posted.push(m));
     const origAdd = window.addEventListener;
-    window.addEventListener = (((type: string, cb: (e: MessageEvent) => void) => {
+    window.addEventListener = ((
+      type: string,
+      cb: (e: MessageEvent) => void,
+    ) => {
       if (type === "message") deliver = (m) => cb({ data: m } as MessageEvent);
-    }) as typeof window.addEventListener);
+    }) as typeof window.addEventListener;
     const bridge = createVSCodeBridge();
     bridge.setRepoContext("/r");
     const request = bridge.request("commitChanges");
@@ -69,15 +81,27 @@ describe("bridge repo context + stale drop", () => {
     let deliver!: (m: unknown) => void;
     installAcquire((m) => posted.push(m));
     const origAdd = window.addEventListener;
-    window.addEventListener = (((type: string, cb: (e: MessageEvent) => void) => {
+    window.addEventListener = ((
+      type: string,
+      cb: (e: MessageEvent) => void,
+    ) => {
       if (type === "message") deliver = (m) => cb({ data: m } as MessageEvent);
-    }) as typeof window.addEventListener);
+    }) as typeof window.addEventListener;
     const bridge = createVSCodeBridge();
     bridge.setRepoContext("/r1");
-    const request = bridge.request("selectRepo", { repoId: "/r2" }, { scope: "global" });
+    const request = bridge.request(
+      "selectRepo",
+      { repoId: "/r2" },
+      { scope: "global" },
+    );
     expect(posted[0].repoId).toBeUndefined();
     bridge.setRepoContext("/r2");
-    deliver({ type: "response", id: posted[0].id, success: true, data: { activeId: "/r2" } });
+    deliver({
+      type: "response",
+      id: posted[0].id,
+      success: true,
+      data: { activeId: "/r2" },
+    });
     await expect(request).resolves.toMatchObject({ activeId: "/r2" });
     window.addEventListener = origAdd;
   });

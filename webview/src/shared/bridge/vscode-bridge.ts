@@ -15,7 +15,11 @@ export function createVSCodeBridge(): Bridge {
   const vscode = acquireVsCodeApi();
   const pendingRequests = new Map<
     string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void; gen: number | null }
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      gen: number | null;
+    }
   >();
   const eventHandlers = new Set<(event: string, data: unknown) => void>();
   let currentRepoId: string | null = null;
@@ -39,7 +43,10 @@ export function createVSCodeBridge(): Bridge {
         pendingRequests.delete(resp.id);
         if (pending.gen !== null && pending.gen !== generation) {
           pending.reject(
-            new BridgeRequestError("STALE_RESPONSE", "stale response: repo context changed"),
+            new BridgeRequestError(
+              "STALE_RESPONSE",
+              "stale response: repo context changed",
+            ),
           );
           return;
         }
@@ -108,7 +115,12 @@ export function createVSCodeBridge(): Bridge {
       for (const [id, pending] of pendingRequests) {
         if (pending.gen !== null && pending.gen !== generation) {
           pendingRequests.delete(id);
-          pending.reject(new BridgeRequestError("STALE_RESPONSE", "stale response: repo context changed"));
+          pending.reject(
+            new BridgeRequestError(
+              "STALE_RESPONSE",
+              "stale response: repo context changed",
+            ),
+          );
         }
       }
     },

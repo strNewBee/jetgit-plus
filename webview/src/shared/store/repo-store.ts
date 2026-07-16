@@ -1,7 +1,11 @@
 import { create } from "zustand";
 import { bridge } from "../bridge";
 
-export interface RepoDescriptorView { id: string; name: string; rootPath: string; }
+export interface RepoDescriptorView {
+  id: string;
+  name: string;
+  rootPath: string;
+}
 
 interface RepoStore {
   repos: RepoDescriptorView[];
@@ -14,7 +18,11 @@ export const useRepoStore = create<RepoStore>((set) => ({
   repos: [],
   activeRepoId: null,
   load: async () => {
-    const data = (await bridge.request("getRepos", {}, { scope: "global" })) as {
+    const data = (await bridge.request(
+      "getRepos",
+      {},
+      { scope: "global" },
+    )) as {
       repos: RepoDescriptorView[];
       activeId: string | null;
     };
@@ -28,7 +36,11 @@ export const useRepoStore = create<RepoStore>((set) => ({
       set({ activeRepoId: repoId });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await bridge.request("showErrorNotification", { message }, { scope: "global" });
+      await bridge.request(
+        "showErrorNotification",
+        { message },
+        { scope: "global" },
+      );
     }
   },
 }));
@@ -45,7 +57,10 @@ export function subscribeRepoEvents() {
       bridge.setRepoContext(id);
       useRepoStore.setState({ activeRepoId: id });
     } else if (event === "reposChanged") {
-      const d = data as { repos: RepoDescriptorView[]; activeId: string | null };
+      const d = data as {
+        repos: RepoDescriptorView[];
+        activeId: string | null;
+      };
       bridge.setRepoContext(d.activeId);
       useRepoStore.setState({ repos: d.repos, activeRepoId: d.activeId });
     }

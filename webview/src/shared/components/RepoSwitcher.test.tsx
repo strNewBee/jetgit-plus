@@ -1,10 +1,14 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
-import { RepoSwitcher } from "./RepoSwitcher";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useRepoStore } from "../store/repo-store";
+import { RepoSwitcher } from "./RepoSwitcher";
 
 vi.mock("../bridge", () => ({
-  bridge: { request: vi.fn(), onEvent: vi.fn(() => () => {}), setRepoContext: vi.fn() },
+  bridge: {
+    request: vi.fn(),
+    onEvent: vi.fn(() => () => {}),
+    setRepoContext: vi.fn(),
+  },
 }));
 
 afterEach(() => cleanup());
@@ -14,7 +18,10 @@ describe("RepoSwitcher", () => {
     useRepoStore.setState({ repos: [], activeRepoId: null });
     const { container } = render(<RepoSwitcher />);
     expect(container.textContent).toBe("");
-    useRepoStore.setState({ repos: [{ id: "/a", name: "a", rootPath: "/a" }], activeRepoId: "/a" });
+    useRepoStore.setState({
+      repos: [{ id: "/a", name: "a", rootPath: "/a" }],
+      activeRepoId: "/a",
+    });
     const { container: c2 } = render(<RepoSwitcher />);
     expect(c2.textContent).toBe("");
   });
