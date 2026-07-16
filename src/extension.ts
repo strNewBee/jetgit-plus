@@ -69,13 +69,6 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   if (savedActive) repoRegistry.setActive(savedActive);
 
-  // Compatibility aliases keep pre-Task-5 handlers runnable.
-  let gitService = repoRegistry.getActive()?.gitService ?? null;
-  let workspaceRoot = repoRegistry.getActive()?.descriptor.rootPath;
-  let allGitServices = repoRegistry
-    .list()
-    .map((repo) => repoRegistry.get(repo.id)?.gitService)
-    .filter((service): service is GitService => Boolean(service));
   let diffManager: DiffEditorManager | null = null;
 
   // Until Task 13 flips strict mode, missing repoId means the active repo.
@@ -92,9 +85,13 @@ export async function activate(context: vscode.ExtensionContext) {
     };
   });
 
-  if (gitService) {
+  // diffManager / contentProvider are constructed from the active runtime.
+  // Task 6/7 rebind these per-repo; for now they stay module-level so native
+  // commands (nextDiff/prevDiff/openDiffEditor) and the diff handler can use them.
+  const activeRuntime = repoRegistry.getActive();
+  if (activeRuntime) {
     // Register virtual document provider for git file content
-    const contentProvider = new GitContentProvider(gitService);
+    const contentProvider = new GitContentProvider(activeRuntime.gitService);
     contentProvider.setExternalContentMap(shelfDiffContent);
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(
@@ -108,14 +105,14 @@ export async function activate(context: vscode.ExtensionContext) {
       ),
     );
 
-    diffManager = new DiffEditorManager(gitService);
+    diffManager = new DiffEditorManager(activeRuntime.gitService);
   }
 
   // 2c. CommitViewProvider (always registered)
   const commitProvider = new CommitViewProvider(
     context.extensionUri,
     messageRouter,
-    allGitServices.map((s) => s.cache),
+    repoRegistry,
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -144,11 +141,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // 5. Register VSCode commands (always registered)
   context.subscriptions.push(
     vscode.commands.registerCommand("jetgit-plus.openPushPanel", async () => {
-      if (!gitService) return;
-      const branch = await gitService.getCurrentBranch();
+      const runtime = repoRegistry.getActive();
+      if (!runtime) return;
+      const branch = await runtime.gitService.getCurrentBranch();
       if (branch) {
-        const remote = await gitService.getDefaultRemote(branch);
-        pushPanel.open(branch, remote);
+        const remote = await runtime.gitService.getDefaultRemote(branch);
+        pushPanel.open(runtime.descriptor.id, branch, remote);
       }
     }),
     vscode.commands.registerCommand(
@@ -212,7 +210,8 @@ export async function activate(context: vscode.ExtensionContext) {
       "jetgit-plus.showFileHistory",
       async (uri?: vscode.Uri) => {
         const fileUri = uri ?? vscode.window.activeTextEditor?.document.uri;
-        if (!fileUri || !workspaceRoot) return;
+        const runtime = repoRegistry.getActive();
+        if (!fileUri || !runtime) return;
         const relativePath = vscode.workspace.asRelativePath(fileUri, false);
         // Ensure the Git Log panel is visible before sending the event
         await vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
@@ -229,6 +228,8 @@ export async function activate(context: vscode.ExtensionContext) {
       const uri = editor.document.uri;
       const line = editor.selection.active.line;
       const character = editor.selection.active.character;
+      const runtime = repoRegistry.getActive();
+      const workspaceRoot = runtime?.descriptor.rootPath;
 
       // Resolve the actual workspace file path from diff URI
       // Format: jetgit-plus:/<relativePath>?ref=<commitHash>
@@ -290,7 +291,8 @@ export async function activate(context: vscode.ExtensionContext) {
     return undefined;
   });
 
-  messageRouter.handle("openDiffEditor", async (params) => {
+  messageRouter.handle("openDiffEditor", async (params, ctx) => {
+    if (!ctx) return undefined;
     if (!diffManager) return undefined;
     const commit = params.commit as string;
     const filePathParam = params.filePath as string | undefined;
@@ -337,10 +339,11 @@ export async function activate(context: vscode.ExtensionContext) {
     return undefined;
   });
 
-  messageRouter.handle("getGraphData", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getGraphData", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
+    const { gitService } = ctx;
     const options = {
       maxCount: (params.maxCount as number) ?? 200,
       skip: params.skip as number | undefined,
@@ -354,19 +357,20 @@ export async function activate(context: vscode.ExtensionContext) {
     return result;
   });
 
-  messageRouter.handle("getLog", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getLog", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return gitService.getLog(
+    return ctx.gitService.getLog(
       params as Record<string, unknown> & { maxCount?: number },
     );
   });
 
-  messageRouter.handle("loadMoreLog", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("loadMoreLog", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
+    const { gitService } = ctx;
     const options = {
       maxCount: (params.count as number) ?? 200,
       skip: (params.skip as number) ?? 0,
@@ -379,126 +383,144 @@ export async function activate(context: vscode.ExtensionContext) {
     return result;
   });
 
-  messageRouter.handle("getBranches", async () => {
-    if (!gitService) {
+  messageRouter.handle("getBranches", async (_params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return gitService.getBranches();
+    return ctx.gitService.getBranches();
   });
 
-  messageRouter.handle("getRemoteBranches", async () => {
-    if (!gitService) {
+  messageRouter.handle("getRemoteBranches", async (_params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
     // Invalidate branch cache to reflect latest remote changes
-    gitService.cache.invalidate("branches");
-    return gitService.getRemoteBranches();
+    ctx.gitService.cache.invalidate("branches");
+    return ctx.gitService.getRemoteBranches();
   });
 
-  messageRouter.handle("getTags", async () => {
-    if (!gitService) {
+  messageRouter.handle("getTags", async (_params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return gitService.getTags();
+    return ctx.gitService.getTags();
   });
 
-  messageRouter.handle("getDiff", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getDiff", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
     const ref1 = params.ref1 as string;
     const ref2 = params.ref2 as string;
     const file = params.file as string | undefined;
-    return gitService.getDiff(ref1, ref2, file);
+    return ctx.gitService.getDiff(ref1, ref2, file);
   });
 
-  messageRouter.handle("getFileContent", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getFileContent", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
     const ref = params.ref as string;
     const filePath = params.filePath as string;
-    return gitService.getFileContent(ref, filePath);
+    return ctx.gitService.getFileContent(ref, filePath);
   });
 
-  messageRouter.handle("getCommitFiles", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getCommitFiles", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
     const hash = params.hash as string;
-    return gitService.getCommitFiles(hash);
+    return ctx.gitService.getCommitFiles(hash);
   });
 
-  messageRouter.handle("getCommitRangeFiles", async (params) => {
-    if (!gitService) {
+  messageRouter.handle("getCommitRangeFiles", async (params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
     const hashes = params.hashes as string[];
-    return gitService.getCommitRangeFiles(hashes);
+    return ctx.gitService.getCommitRangeFiles(hashes);
   });
 
-  messageRouter.handle("getStatus", async () => {
-    if (!gitService) {
+  messageRouter.handle("getStatus", async (_params, ctx) => {
+    if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return gitService.getStatus();
+    return ctx.gitService.getStatus();
   });
 
-  messageRouter.handle("getMergeState", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    return gitService.getMergeState();
+  messageRouter.handle("getMergeState", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getMergeState();
   });
 
-  messageRouter.handle("getCherryPickState", async () => {
-    if (!gitService) return { isCherryPicking: false };
-    return gitService.getCherryPickState();
+  messageRouter.handle("getCherryPickState", async (_params, ctx) => {
+    if (!ctx) return { isCherryPicking: false };
+    return ctx.gitService.getCherryPickState();
   });
 
-  messageRouter.handle("cherryPickAction", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("cherryPickAction", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const action = params.action as "continue" | "abort" | "skip";
     return withProgress(messageRouter, async () => {
-      await gitService!.cherryPickAction(action);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      await gitService.cherryPickAction(action);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("getRebaseState", async () => {
-    if (!gitService) return { isRebasing: false };
-    return gitService.getRebaseState();
+  messageRouter.handle("getRebaseState", async (_params, ctx) => {
+    if (!ctx) return { isRebasing: false };
+    return ctx.gitService.getRebaseState();
   });
 
-  messageRouter.handle("rebaseAction", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("rebaseAction", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const action = params.action as "continue" | "abort" | "skip";
     return withProgress(messageRouter, async () => {
-      await gitService!.rebaseAction(action);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      await gitService.rebaseAction(action);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("mergeAction", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("mergeAction", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const action = params.action as "continue" | "abort";
     return withProgress(messageRouter, async () => {
       if (action === "continue") {
-        await gitService!.mergeContinue();
+        await gitService.mergeContinue();
       } else {
-        await gitService!.mergeAbort();
+        await gitService.mergeAbort();
       }
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("getConflictFiles", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    return gitService.getConflictFiles();
+  messageRouter.handle("getConflictFiles", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getConflictFiles();
   });
 
   messageRouter.handle("openConflictsPanel", async () => {
@@ -506,8 +528,9 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("getFileVersions", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("getFileVersions", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const filePath = params.filePath as string;
     const versions = await gitService.getFileVersions(filePath);
     const mergeState = await gitService.getMergeState();
@@ -519,31 +542,33 @@ export async function activate(context: vscode.ExtensionContext) {
     };
   });
 
-  messageRouter.handle("saveMergedContent", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.saveMergedContent(
+  messageRouter.handle("saveMergedContent", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.saveMergedContent(
       params.filePath as string,
       params.content as string,
     );
     return { success: true };
   });
 
-  messageRouter.handle("stageFile", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.stageFile(params.filePath as string);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+  messageRouter.handle("stageFile", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.stageFile(params.filePath as string);
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("acceptOurs", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.acceptOurs(params.filePath as string);
+  messageRouter.handle("acceptOurs", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.acceptOurs(params.filePath as string);
     return { success: true };
   });
 
-  messageRouter.handle("acceptTheirs", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.acceptTheirs(params.filePath as string);
+  messageRouter.handle("acceptTheirs", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.acceptTheirs(params.filePath as string);
     return { success: true };
   });
 
@@ -564,8 +589,9 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("openFile", async (params) => {
+  messageRouter.handle("openFile", async (params, ctx) => {
     const filePath = params.filePath as string;
+    const workspaceRoot = ctx?.repo.rootPath;
     const absPath = workspaceRoot
       ? vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), filePath)
       : vscode.Uri.file(filePath);
@@ -613,18 +639,23 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("checkoutBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("checkoutBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.checkout(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.checkout(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("createBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("createBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const newBranchName = params.newBranchName as string;
     const startPoint = params.startPoint as string;
     const checkout = params.checkout as boolean | undefined;
@@ -633,12 +664,16 @@ export async function activate(context: vscode.ExtensionContext) {
     if (checkout) {
       await gitService.checkout(newBranchName);
     }
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("deleteBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("deleteBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     const isRemote = params.isRemote as boolean;
     const force = params.force as boolean | undefined;
@@ -647,84 +682,113 @@ export async function activate(context: vscode.ExtensionContext) {
     } else {
       await gitService.deleteBranch(branchName, force ?? false);
     }
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("renameBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("renameBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const oldName = params.oldName as string;
     const newName = params.newName as string;
     await gitService.renameBranch(oldName, newName);
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("mergeBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("mergeBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.merge(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.merge(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("rebaseBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("rebaseBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const onto = params.onto as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.rebase(onto);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.rebase(onto);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("checkoutAndRebase", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("checkoutAndRebase", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchToCheckout = params.branchToCheckout as string;
     const rebaseOnto = params.rebaseOnto as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.checkoutAndRebase(branchToCheckout, rebaseOnto);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.checkoutAndRebase(branchToCheckout, rebaseOnto);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("pushBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("pushBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     const force = params.force as boolean | undefined;
     return withProgress(messageRouter, async () => {
-      await gitService!.push(branchName, force ?? false);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.push(branchName, force ?? false);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("getAheadCommits", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("getAheadCommits", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
     const remote = params.remote as string | undefined;
-    const commits = await gitService.getAheadCommits(branchName, remote);
+    const commits = await ctx.gitService.getAheadCommits(branchName, remote);
     return { commits };
   });
 
-  messageRouter.handle("executePush", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("executePush", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     const force = params.force as boolean | undefined;
     const remote = (params.remote as string) || "origin";
     const targetBranch = (params.targetBranch as string) || branchName;
     return withProgress(messageRouter, async () => {
-      const output = await gitService!.push(
+      const output = await gitService.push(
         branchName,
         force ?? false,
         remote,
         targetBranch,
       );
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       // Return push output so webview can show result toast before closing
       const isUpToDate =
         output?.includes("Everything up-to-date") ||
@@ -738,12 +802,13 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("openPushPanel", async () => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("openPushPanel", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branch = await gitService.getCurrentBranch();
     if (!branch) return { error: "No current branch" };
     const remote = await gitService.getDefaultRemote(branch);
-    pushPanel.open(branch, remote);
+    pushPanel.open(ctx.repoId, branch, remote);
     return { success: true };
   });
 
@@ -755,8 +820,10 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("executeRollback", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("executeRollback", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
+    const workspaceRoot = ctx.repo.rootPath;
     const filePaths = params.filePaths as string[];
     const deleteLocalCopies = params.deleteLocalCopies as boolean;
 
@@ -774,7 +841,7 @@ export async function activate(context: vscode.ExtensionContext) {
           if (deleteLocalCopies) {
             // Delete untracked/added file from filesystem
             const absPath = vscode.Uri.joinPath(
-              vscode.Uri.file(workspaceRoot!),
+              vscode.Uri.file(workspaceRoot),
               filePath,
             );
             await vscode.workspace.fs.delete(absPath);
@@ -786,7 +853,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       rollbackPanel.close();
       return { success: true };
     } catch (err: unknown) {
@@ -800,105 +869,146 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("pullBranch", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("pullBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
     return withProgress(messageRouter, async () => {
-      await gitService!.pull(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.pull(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("pullRebase", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("pullRebase", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
     return withProgress(messageRouter, async () => {
-      await gitService!.pullRebase(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.pullRebase(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("pullMerge", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("pullMerge", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string | undefined;
     return withProgress(messageRouter, async () => {
-      await gitService!.pull(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.pull(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("fetchBranch", async () => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("fetchBranch", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     return withProgress(messageRouter, async () => {
-      await gitService!.fetch();
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.fetch();
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("cherryPick", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("cherryPick", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.cherryPick(hash);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.cherryPick(hash);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("checkoutCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("checkoutCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     await gitService.checkoutCommit(hash);
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("revertFileChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("revertFileChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     const filePath = params.filePath as string;
     const status = params.status as string | undefined;
     await gitService.checkoutFileFromParent(hash, filePath, status);
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("cherryPickFileChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("cherryPickFileChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     const filePath = params.filePath as string;
     await gitService.checkoutFileFromCommit(hash, filePath);
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("resetToCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("resetToCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     const mode = params.mode as "soft" | "mixed" | "hard";
     return withProgress(messageRouter, async () => {
-      await gitService!.resetToCommit(hash, mode);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.resetToCommit(hash, mode);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("revertCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("revertCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const hash = params.hash as string;
     return withProgress(messageRouter, async () => {
-      await gitService!.revertCommit(hash);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.revertCommit(hash);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("dropCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("dropCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
 
     const hash = params.hash as string;
 
@@ -925,21 +1035,27 @@ export async function activate(context: vscode.ExtensionContext) {
     // Proceed with progress and 30-second timeout
     return withProgress(messageRouter, async () => {
       const timeoutMs = 30_000;
-      const dropPromise = gitService!.dropCommit(hash);
+      const dropPromise = gitService.dropCommit(hash);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Operation timed out")), timeoutMs),
       );
 
       await Promise.race([dropPromise, timeoutPromise]);
 
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("createBranchFromCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("createBranchFromCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     const hash = params.hash as string;
     const checkout = params.checkout as boolean | undefined;
@@ -948,17 +1064,24 @@ export async function activate(context: vscode.ExtensionContext) {
     if (checkout) {
       await gitService.checkout(branchName);
     }
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("createTag", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("createTag", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const tagName = params.tagName as string;
     const hash = params.hash as string;
     const message = params.message as string | undefined;
     await gitService.createTag(tagName, hash, message);
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
@@ -968,8 +1091,8 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("openFileAtRevision", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("openFileAtRevision", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
     const ref = params.ref as string;
     const uri = vscode.Uri.parse(
@@ -981,45 +1104,41 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── Commit Panel Handlers ───────────────────────────────────────
 
-  messageRouter.handle("getWorkingTreeChanges", async () => {
-    if (allGitServices.length === 0) return NOT_GIT_REPO;
-
-    // Aggregate changes from all workspace folders
-    const allChanges: import("./git/types").WorkingTreeFile[] = [];
-    for (const svc of allGitServices) {
-      try {
-        const changes = await svc.getWorkingTreeChanges();
-        allChanges.push(...changes);
-      } catch {
-        // Skip folders that aren't git repos
-      }
-    }
-    return allChanges;
+  messageRouter.handle("getWorkingTreeChanges", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getWorkingTreeChanges();
   });
 
-  messageRouter.handle("unstageFile", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.unstageFile(params.filePath as string);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+  messageRouter.handle("unstageFile", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.unstageFile(params.filePath as string);
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("stageAll", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.stageAll();
-    messageRouter.broadcastEvent("commitStateChanged", {});
+  messageRouter.handle("stageAll", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.stageAll();
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("unstageAll", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    await gitService.unstageAll();
-    messageRouter.broadcastEvent("commitStateChanged", {});
+  messageRouter.handle("unstageAll", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    await ctx.gitService.unstageAll();
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("commitChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("commitChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const message = params.message as string;
     const amend = params.amend as boolean | undefined;
     const filePaths = params.filePaths as string[] | undefined;
@@ -1030,13 +1149,19 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     await gitService.commit(message, amend ?? false);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("commitAndPush", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("commitAndPush", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const message = params.message as string;
     const amend = params.amend as boolean | undefined;
     const filePaths = params.filePaths as string[] | undefined;
@@ -1046,43 +1171,58 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     return withProgress(messageRouter, async () => {
-      await gitService!.commitAndPush(message, amend ?? false);
-      messageRouter.broadcastEvent("commitStateChanged", {});
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.commitAndPush(message, amend ?? false);
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("amendCommit", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("amendCommit", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const message = params.message as string;
     await gitService.commit(message, true);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("getAmendMessage", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    const message = await gitService.getLastCommitMessage();
+  messageRouter.handle("getAmendMessage", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const message = await ctx.gitService.getLastCommitMessage();
     return { message };
   });
 
-  messageRouter.handle("getRecentCommitMessages", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    return gitService.getRecentCommitMessages(20);
+  messageRouter.handle("getRecentCommitMessages", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getRecentCommitMessages(20);
   });
 
-  messageRouter.handle("refreshGitState", async () => {
-    if (gitService) {
-      gitService.invalidateCache();
+  messageRouter.handle("refreshGitState", async (_params, ctx) => {
+    if (ctx) {
+      ctx.gitService.invalidateCache();
     }
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx?.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("rollbackFile", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("rollbackFile", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const filePath = params.filePath as string;
     const choice = await vscode.window.showWarningMessage(
       `Rollback changes to "${filePath}"? This cannot be undone.`,
@@ -1091,12 +1231,15 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Rollback") return { success: false };
     await gitService.rollbackFile(filePath);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("rollbackFiles", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("rollbackFiles", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const filePaths = params.filePaths as string[];
     if (!filePaths || filePaths.length === 0) return { success: false };
     const choice = await vscode.window.showWarningMessage(
@@ -1108,13 +1251,16 @@ export async function activate(context: vscode.ExtensionContext) {
     for (const filePath of filePaths) {
       await gitService.rollbackFile(filePath);
     }
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("revealInSystemExplorer", async (params) => {
+  messageRouter.handle("revealInSystemExplorer", async (params, ctx) => {
     const filePath = params.filePath as string;
-    if (!filePath || !workspaceRoot) return { success: false };
+    if (!filePath || !ctx) return { success: false };
+    const workspaceRoot = ctx.repo.rootPath;
     const absPath = vscode.Uri.joinPath(
       vscode.Uri.file(workspaceRoot),
       filePath,
@@ -1123,8 +1269,9 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("deleteFiles", async (params) => {
-    if (!workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("deleteFiles", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const workspaceRoot = ctx.repo.rootPath;
     const filePaths = params.filePaths as string[];
     if (!filePaths || filePaths.length === 0) return { success: false };
 
@@ -1152,12 +1299,15 @@ export async function activate(context: vscode.ExtensionContext) {
         // File may already be deleted, ignore
       }
     }
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("showDiffForWorkingFile", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("showDiffForWorkingFile", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const workspaceRoot = ctx.repo.rootPath;
     const filePath = params.filePath as string;
     const staged = params.staged as boolean | undefined;
 
@@ -1194,32 +1344,42 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── Shelf Handlers ───────────────────────────────────────────────
 
-  messageRouter.handle("getShelves", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    return gitService.getShelves();
+  messageRouter.handle("getShelves", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getShelves();
   });
 
-  messageRouter.handle("shelveChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("shelveChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const message = params.message as string | undefined;
     const filePaths = params.filePaths as string[] | undefined;
     await gitService.shelveChanges(message ?? "", filePaths);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("unshelveChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("unshelveChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const stashId = params.stashId as string;
     const drop = (params.drop as boolean) ?? true;
     await gitService.unshelveChanges(stashId, drop);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
+    messageRouter.broadcastEvent("gitStateChanged", {
+      scope: "all",
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("deleteShelve", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("deleteShelve", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const stashId = params.stashId as string;
     const choice = await vscode.window.showWarningMessage(
       `Delete shelved changes "${stashId}"? This cannot be undone.`,
@@ -1228,12 +1388,14 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Delete") return { success: false };
     await gitService.deleteShelve(stashId);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("showShelfFileDiff", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("showShelfFileDiff", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const stashId = params.stashId as string;
     const filePath = params.filePath as string;
 
@@ -1253,15 +1415,18 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("unshelveFile", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("unshelveFile", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const stashId = params.stashId as string;
     const filePath = params.filePath as string;
 
     // Checkout the single file from the stash into the working tree
     try {
       await gitService.checkoutFileFromCommit(stashId, filePath);
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       return { success: true };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1274,31 +1439,38 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── IDEA Shelf Handlers ────────────────────────────────────────────
 
-  messageRouter.handle("getIdeaShelves", async () => {
-    if (!gitService) return NOT_GIT_REPO;
-    return gitService.getIdeaShelves();
+  messageRouter.handle("getIdeaShelves", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    return ctx.gitService.getIdeaShelves();
   });
 
-  messageRouter.handle("ideaShelveChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("ideaShelveChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const message = params.message as string | undefined;
     const filePaths = params.filePaths as string[] | undefined;
     await gitService.ideaShelveChanges(message ?? "", filePaths);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("ideaUnshelveChanges", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("ideaUnshelveChanges", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const shelfName = params.shelfName as string;
     const drop = (params.drop as boolean) ?? true;
     await gitService.ideaUnshelveChanges(shelfName, drop);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("deleteIdeaShelf", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("deleteIdeaShelf", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const shelfName = params.shelfName as string;
     const choice = await vscode.window.showWarningMessage(
       `Delete shelf "${shelfName}"? This cannot be undone.`,
@@ -1307,12 +1479,15 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Delete") return { success: false };
     await gitService.deleteIdeaShelf(shelfName);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    messageRouter.broadcastEvent("commitStateChanged", {
+      repoId: ctx.repoId,
+    });
     return { success: true };
   });
 
-  messageRouter.handle("showIdeaShelfFileDiff", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("showIdeaShelfFileDiff", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const workspaceRoot = ctx.repo.rootPath;
     const shelfName = params.shelfName as string;
     const filePath = params.filePath as string;
 
@@ -1354,8 +1529,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  messageRouter.handle("createPatchFromShelf", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("createPatchFromShelf", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const workspaceRoot = ctx.repo.rootPath;
     const shelfName = params.shelfName as string;
     const patchFile = `${workspaceRoot}/.idea/shelf/${shelfName}/shelved.patch`;
 
@@ -1382,8 +1558,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  messageRouter.handle("copyShelfPatchToClipboard", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("copyShelfPatchToClipboard", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const workspaceRoot = ctx.repo.rootPath;
     const shelfName = params.shelfName as string;
     const patchFile = `${workspaceRoot}/.idea/shelf/${shelfName}/shelved.patch`;
 
@@ -1399,8 +1576,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  messageRouter.handle("importPatches", async () => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("importPatches", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
 
     // Ask user to select patch files
     const fileUris = await vscode.window.showOpenDialog({
@@ -1421,7 +1599,9 @@ export async function activate(context: vscode.ExtensionContext) {
         await gitService.importPatchAsShelf(shelfName, patchContent);
       }
 
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       void vscode.window.showInformationMessage(
         `Imported ${fileUris.length} patch${fileUris.length > 1 ? "es" : ""}`,
       );
@@ -1433,8 +1613,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  messageRouter.handle("importPatchFromClipboard", async () => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+  messageRouter.handle("importPatchFromClipboard", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
 
     try {
       const clipboardContent = await vscode.env.clipboard.readText();
@@ -1460,7 +1641,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const shelfName = `Clipboard patch ${new Date().toLocaleString()}`;
       await gitService.importPatchAsShelf(shelfName, clipboardContent);
 
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      messageRouter.broadcastEvent("commitStateChanged", {
+        repoId: ctx.repoId,
+      });
       void vscode.window.showInformationMessage(
         "Imported patch from clipboard as shelf entry.",
       );
@@ -1476,24 +1659,29 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── Branch Sidebar Actions ─────────────────────────────────────────
 
-  messageRouter.handle("createBranchPrompt", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("createBranchPrompt", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const name = params.branchName as string | undefined;
     const checkout = params.checkout as boolean | undefined;
     const force = params.force as boolean | undefined;
     if (!name) return { success: false };
     return withProgress(messageRouter, async () => {
-      await gitService!.createBranch(name, "HEAD", force ?? false);
+      await gitService.createBranch(name, "HEAD", force ?? false);
       if (checkout) {
-        await gitService!.checkout(name);
+        await gitService.checkout(name);
       }
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("deleteBranchPrompt", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("deleteBranchPrompt", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     if (!branchName) return { success: false };
     const confirm = await vscode.window.showWarningMessage(
@@ -1503,14 +1691,18 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (confirm !== "Delete") return { success: false };
     return withProgress(messageRouter, async () => {
-      await gitService!.deleteBranch(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.deleteBranch(branchName);
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("compareWithCurrent", async (params) => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("compareWithCurrent", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     const branchName = params.branchName as string;
     if (!branchName) return { success: false };
     // Use VS Code's built-in git diff between current branch and selected
@@ -1524,26 +1716,31 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("showMyBranches", async () => {
+  messageRouter.handle("showMyBranches", async (_params, ctx) => {
     // Filter branches by current git user
-    if (!gitService) return NOT_GIT_REPO;
+    if (!ctx) return NOT_GIT_REPO;
     void vscode.window.showInformationMessage(
       "Show My Branches: filter applied in branch tree",
     );
     return { success: true };
   });
 
-  messageRouter.handle("fetchAll", async () => {
-    if (!gitService) return NOT_GIT_REPO;
+  messageRouter.handle("fetchAll", async (_params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const { gitService } = ctx;
     return withProgress(messageRouter, async () => {
-      await gitService!.fetch();
-      gitService!.invalidateCache();
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      await gitService.fetch();
+      gitService.invalidateCache();
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
       return { success: true };
     });
   });
 
-  messageRouter.handle("toggleFavorite", async (params) => {
+  messageRouter.handle("toggleFavorite", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
     // Favorites are a UI-only concept, handled in webview state
     void vscode.window.showInformationMessage(
@@ -1552,13 +1749,15 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("navigateToHead", async (params) => {
+  messageRouter.handle("navigateToHead", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
     const branchName = params.branchName as string;
     if (!branchName) return { success: false };
     // Broadcast event to scroll git log to this branch's head commit
     messageRouter.broadcastEvent("gitStateChanged", {
       scope: "navigateToHead",
       branch: branchName,
+      repoId: ctx.repoId,
     });
     return { success: true };
   });
@@ -1593,9 +1792,8 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }
     await context.workspaceState.update("jetgit.activeRepoId", repoId);
-    const runtime = repoRegistry.get(repoId)!;
-    gitService = runtime.gitService; // removed in Task 5
-    workspaceRoot = runtime.descriptor.rootPath; // removed in Task 5
+    const runtime = repoRegistry.get(repoId);
+    if (!runtime) return { ok: false as const, activeId: repoId };
     const repo = runtime.descriptor;
     messageRouter.broadcastEvent("activeRepoChanged", { repo });
     return { ok: true as const, activeId: repoId };
@@ -1626,13 +1824,6 @@ export async function activate(context: vscode.ExtensionContext) {
           repoRegistry.add(d, new GitService(d.paths));
         }
       }
-      const activeRuntime = repoRegistry.getActive();
-      gitService = activeRuntime?.gitService ?? null;
-      workspaceRoot = activeRuntime?.descriptor.rootPath;
-      allGitServices = repoRegistry
-        .list()
-        .map((repo) => repoRegistry.get(repo.id)?.gitService)
-        .filter((service): service is GitService => Boolean(service));
       broadcastRepos();
       const activeId = repoRegistry.getActiveId();
       await context.workspaceState.update("jetgit.activeRepoId", activeId);
@@ -1645,12 +1836,13 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // 7. GitWatcher (only if GitService is available)
-  if (gitService && workspaceRoot) {
+  // 7. GitWatcher (constructed from the active runtime; Task 6 makes it per-repo)
+  const watcherRuntime = repoRegistry.getActive();
+  if (watcherRuntime) {
     const watcher = new GitWatcher(
-      workspaceRoot,
+      watcherRuntime.descriptor.rootPath,
       messageRouter,
-      gitService.cache,
+      watcherRuntime.gitService.cache,
     );
     context.subscriptions.push(watcher);
   }

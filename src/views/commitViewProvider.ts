@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { GitCache } from "../git/cache";
+import type { RepoRegistry } from "../git/repoRegistry";
 import type { MessageRouter } from "../messages/messageRouter";
 import { getWebviewHtml } from "./html";
 
@@ -9,7 +9,7 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly messageRouter: MessageRouter,
-    private readonly caches: GitCache[] = [],
+    private readonly repoRegistry: RepoRegistry,
   ) {}
 
   resolveWebviewView(
@@ -33,11 +33,15 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
     setTimeout(() => {
       if (webviewView.visible) {
         void vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
-        for (const cache of this.caches) {
-          cache.invalidate();
-        }
-        this.messageRouter.broadcastEvent("commitStateChanged", {});
-        this.messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+        const runtime = this.repoRegistry.getActive();
+        runtime?.gitService.cache.invalidate();
+        this.messageRouter.broadcastEvent("commitStateChanged", {
+          repoId: runtime?.descriptor.id,
+        });
+        this.messageRouter.broadcastEvent("gitStateChanged", {
+          scope: "all",
+          repoId: runtime?.descriptor.id,
+        });
       }
     }, 200);
 
@@ -48,13 +52,15 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
         // Small delay to ensure panels are ready
         setTimeout(() => {
           void vscode.commands.executeCommand("jetgit-plus.gitLog.focus");
-          // Invalidate all git caches to ensure fresh data
-          for (const cache of this.caches) {
-            cache.invalidate();
-          }
-          this.messageRouter.broadcastEvent("commitStateChanged", {});
+          // Invalidate the active repo's git cache to ensure fresh data
+          const runtime = this.repoRegistry.getActive();
+          runtime?.gitService.cache.invalidate();
+          this.messageRouter.broadcastEvent("commitStateChanged", {
+            repoId: runtime?.descriptor.id,
+          });
           this.messageRouter.broadcastEvent("gitStateChanged", {
             scope: "all",
+            repoId: runtime?.descriptor.id,
           });
         }, 100);
       } else {
