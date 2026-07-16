@@ -213,6 +213,13 @@ export class FolderReconciler {
       this.pendingFolders = folders;
       return this.tail;
     }
+    // NOT in flight. Note this branch also covers a `reconcile()` arriving
+    // during the `onSettled` tail: `running` is reset BEFORE that tail awaits
+    // (N1), so a mid-tail call sees `running===false` and starts a FRESH pass
+    // here (chained on the serializer, queued behind the still-held mutex)
+    // rather than coalescing onto the already-loop-exited pass. The tail is
+    // therefore never an orphan window — late folders are always applied by a
+    // follow-up pass.
     this.running = true;
     // Chain the whole pass on the SHARED serializer so it cannot interleave
     // with a concurrent `select` (F5), and so multiple reconciles stay ordered.
@@ -280,6 +287,21 @@ export class FolderReconciler {
       // stale-persist-overwrite window. The tail is awaited even on the failure
       // path so a pass that discovered+applied partially still re-broadcasts a
       // consistent active repo before yielding.
+      //
+      // Fix-5 revision 2 (N1): reset `running` BEFORE awaiting onSettled. This
+      // flag is the reconciler's OWN coalescing gate, SEPARATE from the shared
+      // serializer mutex (which is still held for this whole finally via the
+      // chain above). I1's serialization guarantee is unaffected: onSettled
+      // still runs under the mutex, and a `select` queued during the tail still
+      // waits for the mutex. But a `reconcile()` arriving mid-tail now sees
+      // `running===false`, so instead of stashing onto `pendingFolders` and
+      // coalescing onto THIS (already-loop-exited) pass — which would never
+      // re-enter the loop to apply the stash, orphaning the late folders — it
+      // sets `running=true` and chains a FRESH `runPass` on the serializer,
+      // which queues behind the current pass (still holding the mutex) and runs
+      // after it, applying the late folders. Pre-fix (running reset after
+      // onSettled) the tail was an orphan window for a mid-tail reconcile.
+      this.running = false;
       try {
         await this.onSettled?.();
       } catch (err) {
@@ -288,7 +310,6 @@ export class FolderReconciler {
           err instanceof Error ? (err.stack ?? err) : err,
         );
       }
-      this.running = false;
     }
   }
 }

@@ -710,6 +710,113 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
     assert.strictEqual(persisted.at(-1), "/d");
   });
 
+  it("N1: a reconcile() arriving during the onSettled tail is applied (not orphaned)", async () => {
+    // N1 (Important) regression for the I1 fix: the I1 fix inserted the async
+    // `onSettled` tail between the re-discover loop's exit and `running=false`.
+    // During that tail, `running` was still `true` but the loop had exited, so a
+    // `reconcile(lateFolders)` arriving mid-tail saw `running===true`, stashed
+    // `pendingFolders`, and coalesced onto the settling pass — which never
+    // re-entered the loop to apply the stash. The late folders were ORPHANED,
+    // violating "final state matches the latest folders". A workspace-folder
+    // change arriving during the active-repo workspaceState write could be
+    // silently dropped.
+    //
+    // Fix: reset `running` BEFORE `await onSettled`. A mid-tail reconcile() then
+    // sees `running===false`, starts a FRESH pass (chained on the serializer,
+    // queued behind the still-held mutex), and runs after the current pass,
+    // applying the late folders.
+    //
+    // NON-VACUOUS: reverting the fix (running reset AFTER onSettled) makes this
+    // test FAIL — the late folders are stashed onto the loop-exited pass and
+    // never applied (no fresh discovery for [C] is ever issued), so the final
+    // applied state is [A], not [A, C].
+    const applied: DiscoveredRepo[][] = [];
+    const appliedIds = () =>
+      applied.map((batch) => batch.map((d) => d.descriptor.id));
+
+    const { calls, discover } = controllableDiscover();
+    const shared = new Serializer();
+
+    // Gate the onSettled tail so the arrival window is observable: park the tail
+    // mid-await so we can call reconcile(late) WHILE the first pass is settling.
+    const tailGate = deferred<void>();
+    const reconciler = new FolderReconciler(
+      discover,
+      (repos) => {
+        applied.push(repos);
+      },
+      shared,
+      async () => {
+        await tailGate.promise;
+      },
+    );
+
+    // Start a reconcile for [A]. Its discovery parks in the deferred.
+    const p1 = reconciler.reconcile([{ fsPath: "/a", name: "a" }]);
+    await drainMicrotasks();
+    assert.strictEqual(calls.length, 1, "first pass discovery in flight");
+
+    // Resolve the first discovery: applyDiscovered([A]) runs, the loop exits,
+    // runPass enters its finally and parks on the gated onSettled tail. At this
+    // point the re-discover loop has EXITED but `running` is still true under
+    // the pre-fix code (or already false under the fix).
+    calls[0].d.resolve([discovered("/a")]);
+    await drainMicrotasks();
+    assert.deepStrictEqual(
+      appliedIds(),
+      [["/a"]],
+      "first pass applied [A] before entering the tail",
+    );
+    assert.strictEqual(calls.length, 1, "no follow-up discovery yet");
+
+    // WHILE the first pass is parked in the onSettled tail, call reconcile with
+    // LATE folders [A, C]. Under the fix (running reset before onSettled) this
+    // sees running===false → starts a FRESH pass chained on the serializer
+    // (queued behind the still-held mutex). Under the pre-fix code it sees
+    // running===true → stashes pendingFolders=[A,C] and coalesces onto p1
+    // (which will never re-enter the loop → orphan).
+    const p2 = reconciler.reconcile([
+      { fsPath: "/a", name: "a" },
+      { fsPath: "/c", name: "c" },
+    ]);
+    await drainMicrotasks();
+    // No fresh discovery has run yet: the first pass still holds the mutex,
+    // parked on tailGate. The fresh pass is QUEUED behind it on the serializer.
+    assert.strictEqual(
+      calls.length,
+      1,
+      "fresh pass queued behind the held mutex; no discovery yet",
+    );
+
+    // Release the tail. The first pass's finally completes; the mutex releases;
+    // the queued fresh pass runs and issues its discovery for [A, C].
+    tailGate.resolve();
+    await drainMicrotasks();
+    assert.ok(
+      calls.length >= 2,
+      "fresh pass started a discovery for the late folders after the tail released",
+    );
+    // Resolve the fresh pass's discovery. It echoes [A, C].
+    const lateCall = calls.at(-1);
+    assert.ok(lateCall, "late discovery call exists");
+    assert.deepStrictEqual(lateCall.folders, [
+      { fsPath: "/a", name: "a" },
+      { fsPath: "/c", name: "c" },
+    ]);
+    lateCall.d.resolve([discovered("/a"), discovered("/c")]);
+    await Promise.all([p1, p2]);
+
+    // The LATE folders were APPLIED (a fresh pass discovered+applied them), NOT
+    // orphaned. Final applied state reflects [A, C]. Pre-fix (running reset
+    // after onSettled) only [A] would ever be applied and the assertion below
+    // would fail — proving the test is non-vacuous.
+    assert.deepStrictEqual(
+      appliedIds(),
+      [["/a"], ["/a", "/c"]],
+      "late folders applied by a fresh pass, not orphaned",
+    );
+  });
+
   it("if reconcile runs first and removes B, a subsequent select(B) fails cleanly (REPO_NOT_FOUND) instead of broadcasting null", async () => {
     // The symmetric interleaving: the reconciliation that removes B completes
     // BEFORE select(B) gets the mutex. select(B) then finds B gone → rejects,
