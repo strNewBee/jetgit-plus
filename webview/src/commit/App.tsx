@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { bridge } from "../shared/bridge";
+import { RepoSwitcher } from "../shared/components/RepoSwitcher";
 import { Tooltip } from "../shared/components/Tooltip";
 import "../shared/components/Tooltip.css";
-import { useCommitStore } from "../shared/store/commit-store";
+import {
+  applyRepoSwitch,
+  pruneRemovedDrafts,
+  useCommitStore,
+} from "../shared/store/commit-store";
+import { subscribeRepoEvents, useRepoStore } from "../shared/store/repo-store";
 import { CommitTab } from "./components/CommitTab";
 import { IdeaShelfTab } from "./components/IdeaShelfTab";
 import { ShelfTab } from "./components/ShelfTab";
@@ -512,23 +518,48 @@ function MergeBanner() {
 }
 
 export function CommitApp() {
-  const {
-    activeTab,
-    setActiveTab,
-    loading,
-    fetchChanges,
-    fetchShelves,
-    fetchIdeaShelves,
-  } = useCommitStore();
+  const activeTab = useCommitStore((s) => s.activeTab);
+  const setActiveTab = useCommitStore((s) => s.setActiveTab);
+  const loading = useCommitStore((s) => s.loading);
 
   useEffect(() => {
-    fetchChanges();
-    fetchShelves();
-    fetchIdeaShelves();
-  }, [fetchChanges, fetchShelves, fetchIdeaShelves]);
+    subscribeRepoEvents();
+    let disposed = false;
+    let bootstrapping = true;
+    let lastRepo: string | null = null;
+    const unsub = useRepoStore.subscribe((s) => {
+      if (bootstrapping) return;
+      if (s.activeRepoId !== lastRepo) {
+        const prev = lastRepo;
+        lastRepo = s.activeRepoId;
+        if (!disposed) void applyRepoSwitch(prev, s.activeRepoId);
+      }
+      pruneRemovedDrafts(s.repos.map((r) => r.id));
+    });
+    void (async () => {
+      await useRepoStore.getState().load();
+      if (disposed) return;
+      bootstrapping = false;
+      lastRepo = useRepoStore.getState().activeRepoId;
+      await applyRepoSwitch(null, lastRepo);
+    })();
+    return () => {
+      disposed = true;
+      unsub();
+    };
+  }, []);
 
   return (
     <div className="commit-app">
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "4px 8px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <RepoSwitcher disabled={loading} />
+      </div>
       <div className="commit-tabs">
         <button
           type="button"

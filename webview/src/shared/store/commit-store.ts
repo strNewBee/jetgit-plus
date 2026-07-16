@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { bridge } from "../bridge";
+import { useRepoStore } from "./repo-store";
 
 export interface WorkingTreeFile {
   path: string;
@@ -477,11 +478,67 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 }));
 
-// Listen for commit state changes
-bridge.onEvent((event) => {
-  if (event === "commitStateChanged" || event === "gitStateChanged") {
-    useCommitStore.getState().fetchChanges();
-    useCommitStore.getState().fetchIdeaShelves();
-    useCommitStore.getState().fetchShelves();
+// --- Per-repo draft isolation -------------------------------------------------
+
+interface DraftSnapshot {
+  commitMessage: string;
+  selectedFiles: Set<string>;
+  highlightedFiles: Set<string>;
+  amend: boolean;
+  expandedGroups: Set<string>;
+  collapsedDirs: Set<string>;
+}
+
+const drafts = new Map<string, DraftSnapshot>();
+
+function snapshotCurrent(): DraftSnapshot {
+  const s = useCommitStore.getState();
+  return {
+    commitMessage: s.commitMessage,
+    selectedFiles: new Set(s.selectedFiles),
+    highlightedFiles: new Set(s.highlightedFiles),
+    amend: s.amend,
+    expandedGroups: new Set(s.expandedGroups),
+    collapsedDirs: new Set(s.collapsedDirs),
+  };
+}
+
+/** Save outgoing draft, restore incoming (or reset), reload working tree. */
+export async function applyRepoSwitch(
+  prevRepoId: string | null,
+  nextRepoId: string | null,
+  reload = true,
+) {
+  if (prevRepoId) drafts.set(prevRepoId, snapshotCurrent());
+  const snap = nextRepoId ? drafts.get(nextRepoId) : undefined;
+  useCommitStore.setState({
+    commitMessage: snap?.commitMessage ?? "",
+    changes: [],
+    shelves: [],
+    ideaShelves: [],
+    selectedFiles: new Set(snap?.selectedFiles ?? []),
+    highlightedFiles: new Set(snap?.highlightedFiles ?? []),
+    amend: snap?.amend ?? false,
+    expandedGroups: new Set(
+      snap?.expandedGroups ?? ["changes", "unversioned", "staged"],
+    ),
+    collapsedDirs: new Set(snap?.collapsedDirs ?? []),
+  });
+  if (nextRepoId && reload) await useCommitStore.getState().refresh();
+}
+
+/** Drop drafts for repos no longer present (called on reposChanged). */
+export function pruneRemovedDrafts(currentRepoIds: string[]) {
+  const keep = new Set(currentRepoIds);
+  for (const id of drafts.keys()) if (!keep.has(id)) drafts.delete(id);
+}
+
+// Listen for commit state changes — refresh only when the event targets the
+// active repo OR carries no repoId (e.g. host refresh broadcasts scope:"all").
+bridge.onEvent((event, data) => {
+  if (event !== "commitStateChanged" && event !== "gitStateChanged") return;
+  const { repoId } = data as { repoId?: string };
+  if (!repoId || repoId === useRepoStore.getState().activeRepoId) {
+    void useCommitStore.getState().refresh();
   }
 });
