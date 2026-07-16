@@ -3,8 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import "allotment/dist/style.css";
 import { Tooltip } from "../shared/components/Tooltip";
 import "../shared/components/Tooltip.css";
+import { RepoSwitcher } from "../shared/components/RepoSwitcher";
 import { usePreventSelect } from "../shared/hooks/usePreventSelect";
 import { usePanelStore } from "../shared/store/panel-store";
+import { subscribeRepoEvents, useRepoStore } from "../shared/store/repo-store";
 import { BranchTree } from "./components/BranchTree";
 import { DetailPanel } from "./components/DetailPanel";
 import { GitGraphPanel } from "./components/GitGraphPanel";
@@ -46,7 +48,6 @@ function ProgressBar({ visible }: { visible: boolean }) {
 
 export function PanelApp() {
   const loading = usePanelStore((s) => s.loading);
-  const commits = usePanelStore((s) => s.commits);
   const operationInProgress = usePanelStore((s) => s.operationInProgress);
   const fetchInitialData = usePanelStore((s) => s.fetchInitialData);
 
@@ -83,24 +84,30 @@ export function PanelApp() {
   const middleRef = usePreventSelect();
 
   useEffect(() => {
-    fetchInitialData();
+    subscribeRepoEvents();
+    let disposed = false;
+    let bootstrapping = true;
+    let lastRepo: string | null = null;
+    const unsub = useRepoStore.subscribe((s) => {
+      if (bootstrapping) return;
+      if (s.activeRepoId !== lastRepo) {
+        lastRepo = s.activeRepoId;
+        if (!disposed && lastRepo)
+          void usePanelStore.getState().fetchInitialData();
+      }
+    });
+    void (async () => {
+      await useRepoStore.getState().load();
+      if (disposed) return;
+      bootstrapping = false;
+      lastRepo = useRepoStore.getState().activeRepoId;
+      if (lastRepo) await fetchInitialData();
+    })();
+    return () => {
+      disposed = true;
+      unsub();
+    };
   }, [fetchInitialData]);
-
-  if (loading && commits.length === 0) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-          opacity: 0.5,
-        }}
-      >
-        Loading...
-      </div>
-    );
-  }
 
   return (
     <div
@@ -111,6 +118,15 @@ export function PanelApp() {
         position: "relative",
       }}
     >
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "4px 8px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <RepoSwitcher disabled={loading || operationInProgress} />
+      </div>
       <ProgressBar visible={operationInProgress || loading} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* Left branch panel — outside Allotment to avoid flicker */}

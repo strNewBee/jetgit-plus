@@ -9,6 +9,7 @@ import type {
   LaneSnapshot,
   TagInfo,
 } from "../types/git";
+import { useRepoStore } from "./repo-store";
 
 interface PanelFilter {
   searchQuery: string;
@@ -638,7 +639,10 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 // Listen for git state changes
 bridge.onEvent((event, data) => {
   if (event === "gitStateChanged") {
-    usePanelStore.getState().refresh();
+    const { repoId } = data as { repoId?: string };
+    if (!repoId || repoId === useRepoStore.getState().activeRepoId) {
+      void usePanelStore.getState().refresh();
+    }
   }
   if (event === "showFileHistory") {
     const { file } = data as { file: string };
