@@ -44,17 +44,36 @@ const LOG_FORMAT = [
   "%D", // refs
 ].join(FMT_FIELD_SEP);
 
+import type { RepositoryPaths } from "./repoRegistry";
+
 export class GitService {
   readonly cache = new GitCache();
+  readonly paths: RepositoryPaths;
 
-  constructor(private readonly cwd: string) {}
+  constructor(paths: RepositoryPaths);
+  /** Migration-only overload removed in Task 4 after extension wiring uses discovery. */
+  constructor(rootPath: string);
+  constructor(pathsOrRoot: RepositoryPaths | string) {
+    this.paths =
+      typeof pathsOrRoot === "string"
+        ? {
+            workTreeRoot: pathsOrRoot,
+            gitDir: path.join(pathsOrRoot, ".git"),
+            commonDir: path.join(pathsOrRoot, ".git"),
+          }
+        : pathsOrRoot;
+  }
+
+  get rootPath(): string {
+    return this.paths.workTreeRoot;
+  }
 
   private async execGit(
     args: string[],
     maxBuffer = MAX_BUFFER,
   ): Promise<string> {
     const { stdout } = await execFileAsync("git", args, {
-      cwd: this.cwd,
+      cwd: this.rootPath,
       maxBuffer,
       env: {
         ...process.env,
@@ -327,7 +346,7 @@ export class GitService {
         "git",
         ["show", `${ref}:${filePath}`],
         {
-          cwd: this.cwd,
+          cwd: this.rootPath,
           maxBuffer: MAX_BUFFER,
           encoding: "buffer",
           env: {
@@ -438,12 +457,12 @@ export class GitService {
   async getMergeState(): Promise<MergeState> {
     try {
       const mergeHead = (
-        await fs.readFile(path.join(this.cwd, ".git", "MERGE_HEAD"), "utf-8")
+        await fs.readFile(path.join(this.paths.gitDir, "MERGE_HEAD"), "utf-8")
       ).trim();
       let mergeMsg = "";
       try {
         mergeMsg = (
-          await fs.readFile(path.join(this.cwd, ".git", "MERGE_MSG"), "utf-8")
+          await fs.readFile(path.join(this.paths.gitDir, "MERGE_MSG"), "utf-8")
         ).trim();
       } catch {}
       return { isMerging: true, mergeHead, mergeMsg };
@@ -456,7 +475,7 @@ export class GitService {
     try {
       const cherryPickHead = (
         await fs.readFile(
-          path.join(this.cwd, ".git", "CHERRY_PICK_HEAD"),
+          path.join(this.paths.gitDir, "CHERRY_PICK_HEAD"),
           "utf-8",
         )
       ).trim();
@@ -495,8 +514,8 @@ export class GitService {
     step?: number;
     totalSteps?: number;
   }> {
-    const rebaseMergePath = path.join(this.cwd, ".git", "rebase-merge");
-    const rebaseApplyPath = path.join(this.cwd, ".git", "rebase-apply");
+    const rebaseMergePath = path.join(this.paths.gitDir, "rebase-merge");
+    const rebaseApplyPath = path.join(this.paths.gitDir, "rebase-apply");
     try {
       await fs.access(rebaseMergePath);
       let branchName = "";
@@ -580,7 +599,7 @@ export class GitService {
   }
 
   async saveMergedContent(filePath: string, content: string): Promise<void> {
-    await fs.writeFile(path.join(this.cwd, filePath), content, "utf-8");
+    await fs.writeFile(path.join(this.rootPath, filePath), content, "utf-8");
   }
 
   async stageFile(filePath: string): Promise<void> {
@@ -778,7 +797,7 @@ export class GitService {
         }
         // Also try to remove the physical file if it exists
         try {
-          await fs.unlink(path.join(this.cwd, filePath));
+          await fs.unlink(path.join(this.rootPath, filePath));
         } catch {
           // File already doesn't exist on disk
         }
@@ -1111,7 +1130,7 @@ export class GitService {
       } catch {
         // Not in index either, nothing to unstage
       }
-      const fullPath = path.join(this.cwd, filePath);
+      const fullPath = path.join(this.rootPath, filePath);
       try {
         await fs.unlink(fullPath);
       } catch {
@@ -1244,7 +1263,7 @@ export class GitService {
   // ─── IDEA Shelf (patch-file based) Operations ─────────────────────
 
   async getIdeaShelves(): Promise<IdeaShelfEntry[]> {
-    const shelfDir = path.join(this.cwd, ".idea", "shelf");
+    const shelfDir = path.join(this.rootPath, ".idea", "shelf");
     try {
       await fs.access(shelfDir);
     } catch {
@@ -1295,7 +1314,10 @@ export class GitService {
     const description = descMatch?.[1] ?? "";
 
     // Resolve $PROJECT_DIR$ to workspace root
-    const patchRelative = pathMatch[1].replace(/\$PROJECT_DIR\$/g, this.cwd);
+    const patchRelative = pathMatch[1].replace(
+      /\$PROJECT_DIR\$/g,
+      this.rootPath,
+    );
     const patchPath = path.isAbsolute(patchRelative)
       ? patchRelative
       : path.join(shelfDir, patchRelative);
@@ -1338,7 +1360,7 @@ export class GitService {
     message: string,
     filePaths?: string[],
   ): Promise<void> {
-    const shelfDir = path.join(this.cwd, ".idea", "shelf");
+    const shelfDir = path.join(this.rootPath, ".idea", "shelf");
     await fs.mkdir(shelfDir, { recursive: true });
 
     const sanitizedName = this.sanitizeShelfName(message || "Changes");
@@ -1383,7 +1405,7 @@ export class GitService {
   }
 
   async ideaUnshelveChanges(shelfName: string, drop?: boolean): Promise<void> {
-    const shelfDir = path.join(this.cwd, ".idea", "shelf");
+    const shelfDir = path.join(this.rootPath, ".idea", "shelf");
     const patchPath = path.join(shelfDir, shelfName, "shelved.patch");
 
     try {
@@ -1410,7 +1432,7 @@ export class GitService {
   }
 
   async deleteIdeaShelf(shelfName: string): Promise<void> {
-    const shelfDir = path.join(this.cwd, ".idea", "shelf");
+    const shelfDir = path.join(this.rootPath, ".idea", "shelf");
     const entryDir = path.join(shelfDir, shelfName);
     const xmlPath = path.join(shelfDir, `${shelfName}.xml`);
 
@@ -1439,7 +1461,7 @@ export class GitService {
   }
 
   async importPatchAsShelf(name: string, patchContent: string): Promise<void> {
-    const shelfDir = path.join(this.cwd, ".idea", "shelf");
+    const shelfDir = path.join(this.rootPath, ".idea", "shelf");
     await fs.mkdir(shelfDir, { recursive: true });
 
     const sanitized = this.sanitizeShelfName(name || "Imported");
@@ -1519,7 +1541,7 @@ export class GitService {
 
     // Generate patch for untracked files
     for (const filePath of untracked) {
-      const fullPath = path.join(this.cwd, filePath);
+      const fullPath = path.join(this.rootPath, filePath);
       try {
         const content = await fs.readFile(fullPath, "utf-8");
         const lines = content.split("\n");
@@ -1565,7 +1587,7 @@ export class GitService {
       const untrackedFiles = untrackedOutput.trim().split("\n").filter(Boolean);
 
       for (const filePath of untrackedFiles) {
-        const fullPath = path.join(this.cwd, filePath);
+        const fullPath = path.join(this.rootPath, filePath);
         try {
           const content = await fs.readFile(fullPath, "utf-8");
           const lines = content.split("\n");
@@ -1596,7 +1618,7 @@ export class GitService {
         await this.execGit(["checkout", "HEAD", "--", filePath]);
       } catch {
         // Untracked file: delete it
-        const fullPath = path.join(this.cwd, filePath);
+        const fullPath = path.join(this.rootPath, filePath);
         try {
           await fs.unlink(fullPath);
         } catch {
