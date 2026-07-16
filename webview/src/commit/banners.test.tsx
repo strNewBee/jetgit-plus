@@ -133,9 +133,7 @@ describe("RebaseBanner", () => {
       expect(document.querySelector(".rebase-abort")).toBeTruthy();
     });
 
-    const abortBtn = document.querySelector(
-      ".rebase-abort",
-    ) as HTMLDivElement;
+    const abortBtn = document.querySelector(".rebase-abort") as HTMLDivElement;
     abortBtn.click();
 
     await waitFor(() => {
@@ -191,9 +189,7 @@ describe("CherryPickBanner", () => {
       expect(document.querySelector(".rebase-abort")).toBeTruthy();
     });
 
-    const abortBtn = document.querySelector(
-      ".rebase-abort",
-    ) as HTMLDivElement;
+    const abortBtn = document.querySelector(".rebase-abort") as HTMLDivElement;
     abortBtn.click();
 
     await waitFor(() => {

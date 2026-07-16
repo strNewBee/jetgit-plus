@@ -69,8 +69,6 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   if (savedActive) repoRegistry.setActive(savedActive);
 
-  let diffManager: DiffEditorManager | null = null;
-
   // Until Task 13 flips strict mode, missing repoId means the active repo.
   messageRouter.setRepoResolver((repoId) => {
     const runtime = repoId
@@ -89,25 +87,26 @@ export async function activate(context: vscode.ExtensionContext) {
   // They resolve the originating repo from the diff URI's ?repo= param
   // (or the active repo for legacy URIs) and stay module-level so native
   // commands (nextDiff/prevDiff/openDiffEditor) and the diff handler can use them.
-  const activeRuntime = repoRegistry.getActive();
-  if (activeRuntime) {
-    // Register virtual document provider for git file content
-    const contentProvider = new GitContentProvider(repoRegistry);
-    contentProvider.setExternalContentMap(shelfDiffContent);
-    context.subscriptions.push(
-      vscode.workspace.registerTextDocumentContentProvider(
-        JETGIT_PLUS_SCHEME,
-        contentProvider,
-      ),
-      vscode.workspace.registerFileSystemProvider(
-        JETGIT_PLUS_SCHEME,
-        contentProvider,
-        { isReadonly: true },
-      ),
-    );
+  // Registered UNCONDITIONALLY: both resolve the repo lazily per request, so they
+  // don't need an active repo at construction. This matters for multi-root setups
+  // launched with zero repos (or where the first repo is discovered after activation) —
+  // otherwise git-content diff URIs wouldn't resolve and native diff commands would
+  // no-op until something re-ran activation (which never happens).
+  const contentProvider = new GitContentProvider(repoRegistry);
+  contentProvider.setExternalContentMap(shelfDiffContent);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      JETGIT_PLUS_SCHEME,
+      contentProvider,
+    ),
+    vscode.workspace.registerFileSystemProvider(
+      JETGIT_PLUS_SCHEME,
+      contentProvider,
+      { isReadonly: true },
+    ),
+  );
 
-    diffManager = new DiffEditorManager(repoRegistry);
-  }
+  const diffManager = new DiffEditorManager(repoRegistry);
 
   // 2c. CommitViewProvider (always registered)
   const commitProvider = new CommitViewProvider(
