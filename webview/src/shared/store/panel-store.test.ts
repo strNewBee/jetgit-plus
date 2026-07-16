@@ -220,6 +220,161 @@ describe("panel-store resetForRepoSwitch", () => {
     expect(s.pendingSelectionFromFilter).toEqual([]);
   });
 
+  it("clears ALL repo-bound display data (commits/branches/tags/graph/selection/range) on switch (F3)", () => {
+    // Seed the store with repo-A data across every repo-bound field.
+    usePanelStore.setState({
+      commits: [{ hash: "a1" } as never],
+      visibleCommits: [{ hash: "a1" } as never],
+      branches: [{ name: "main", isCurrent: true } as never],
+      tags: [{ name: "v1" } as never],
+      currentBranch: "main",
+      graphLayout: { lane0: {} as never },
+      laneSnapshot: { lanes: [], commitLanes: { a1: 0 } } as never,
+      selectedCommitHash: "a1",
+      selectedCommitHashes: ["a1"],
+      lastSelectedCommitHash: "a1",
+      commitFiles: [{ path: "a.ts" } as never],
+      selectedFilePath: "a.ts",
+      rangeOldest: "a1",
+      rangeNewest: "a1",
+      collapsedSequenceIds: new Set(["seq1"]),
+      collapsedIntermediates: new Map([["seq1", ["h1"]]]),
+      pendingSelectionFromFilter: ["a1"],
+      filter: {
+        searchQuery: "keep-search",
+        branch: "feature-a",
+        author: "keep-author",
+        dateRange: "keep-date",
+        file: "src/a.ts",
+      },
+    });
+
+    usePanelStore.getState().resetForRepoSwitch();
+    const s = usePanelStore.getState();
+
+    // repo-bound display data cleared — nothing stale to act on during B's load
+    expect(s.commits).toEqual([]);
+    expect(s.visibleCommits).toEqual([]);
+    expect(s.branches).toEqual([]);
+    expect(s.tags).toEqual([]);
+    expect(s.currentBranch).toBe("");
+    expect(s.graphLayout).toEqual({});
+    expect(s.laneSnapshot).toBeNull();
+    // selection cleared (A's hashes must not survive into a B-bound context)
+    expect(s.selectedCommitHash).toBeNull();
+    expect(s.selectedCommitHashes).toEqual([]);
+    expect(s.lastSelectedCommitHash).toBeNull();
+    expect(s.commitFiles).toEqual([]);
+    expect(s.selectedFilePath).toBeNull();
+    // range cleared
+    expect(s.rangeOldest).toBeNull();
+    expect(s.rangeNewest).toBeNull();
+    // collapse + pending-selection (tied to old graph/hashes) cleared
+    expect(s.collapsedSequenceIds.size).toBe(0);
+    expect(s.collapsedIntermediates.size).toBe(0);
+    expect(s.pendingSelectionFromFilter).toEqual([]);
+
+    // repo-scoped filter cleared, carryover preserved
+    expect(s.filter.branch).toBe("");
+    expect(s.filter.file).toBe("");
+    expect(s.filter.searchQuery).toBe("keep-search");
+    expect(s.filter.author).toBe("keep-author");
+    expect(s.filter.dateRange).toBe("keep-date");
+  });
+
+  it("resetForRepoSwitch clears the same repo-bound field set as clearForNoRepo (no drift)", () => {
+    // Seed identical rich state, run both resets, and assert the repo-bound
+    // (non-filter, non-hasMore) slice is identical between the two paths.
+    const seed = {
+      commits: [{ hash: "a1" } as never],
+      visibleCommits: [{ hash: "a1" } as never],
+      branches: [{ name: "main", isCurrent: true } as never],
+      tags: [{ name: "v1" } as never],
+      currentBranch: "main",
+      graphLayout: { lane0: {} as never },
+      laneSnapshot: { lanes: [], commitLanes: {} } as never,
+      selectedCommitHash: "a1",
+      selectedCommitHashes: ["a1"],
+      lastSelectedCommitHash: "a1",
+      commitFiles: [{ path: "a.ts" } as never],
+      selectedFilePath: "a.ts",
+      rangeOldest: "a1",
+      rangeNewest: "a1",
+      collapsedSequenceIds: new Set(["seq1"]),
+      collapsedIntermediates: new Map([["seq1", ["h1"]]]),
+      pendingSelectionFromFilter: ["a1"],
+    };
+
+    usePanelStore.setState({ ...seed });
+    usePanelStore.getState().resetForRepoSwitch();
+    const afterSwitch = usePanelStore.getState();
+
+    usePanelStore.setState({ ...seed });
+    usePanelStore.getState().clearForNoRepo();
+    const afterNull = usePanelStore.getState();
+
+    const pick = (s: typeof afterSwitch) => ({
+      commits: s.commits,
+      visibleCommits: s.visibleCommits,
+      branches: s.branches,
+      tags: s.tags,
+      currentBranch: s.currentBranch,
+      graphLayout: s.graphLayout,
+      laneSnapshot: s.laneSnapshot,
+      selectedCommitHash: s.selectedCommitHash,
+      selectedCommitHashes: s.selectedCommitHashes,
+      lastSelectedCommitHash: s.lastSelectedCommitHash,
+      commitFiles: s.commitFiles,
+      selectedFilePath: s.selectedFilePath,
+      rangeOldest: s.rangeOldest,
+      rangeNewest: s.rangeNewest,
+      collapsedSequenceIds: s.collapsedSequenceIds,
+      collapsedIntermediates: s.collapsedIntermediates,
+      pendingSelectionFromFilter: s.pendingSelectionFromFilter,
+    });
+
+    expect(pick(afterSwitch)).toEqual(pick(afterNull));
+  });
+
+  it("a failed fetchInitialData after reset does NOT resurrect stale repo-A data (F3 fetch-failure guarantee)", async () => {
+    const { bridge } = await import("../bridge");
+    const mockedRequest = vi.mocked(bridge.request);
+    mockedRequest.mockReset();
+
+    // Seed repo-A display data, then switch (clearing it all).
+    usePanelStore.setState({
+      commits: [{ hash: "a1" } as never],
+      branches: [{ name: "main", isCurrent: true } as never],
+      tags: [{ name: "v1" } as never],
+      selectedCommitHash: "a1",
+      graphLayout: { lane0: {} as never },
+      filter: {
+        searchQuery: "keep",
+        branch: "feature-a",
+        author: "al",
+        dateRange: "7days",
+        file: "src/a.ts",
+      },
+    });
+    usePanelStore.getState().resetForRepoSwitch();
+
+    // Simulate repo B's fetch failing entirely.
+    mockedRequest.mockRejectedValue(new Error("network down"));
+    await usePanelStore.getState().fetchInitialData();
+
+    const s = usePanelStore.getState();
+    // Store stays empty — no A data resurrected by the failed fetch.
+    expect(s.commits).toEqual([]);
+    expect(s.branches).toEqual([]);
+    expect(s.tags).toEqual([]);
+    expect(s.selectedCommitHash).toBeNull();
+    expect(s.graphLayout).toEqual({});
+    // Carryover filter still preserved across the failed fetch.
+    expect(s.filter.searchQuery).toBe("keep");
+    expect(s.filter.branch).toBe("");
+    expect(s.filter.file).toBe("");
+  });
+
   it("after reset, fetchInitialData does NOT carry the old repo's branch/file into getGraphData", async () => {
     const { bridge } = await import("../bridge");
     const mockedRequest = vi.mocked(bridge.request);

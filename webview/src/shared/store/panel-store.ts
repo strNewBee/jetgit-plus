@@ -203,6 +203,36 @@ function deriveSelectionFromVisible(
   };
 }
 
+/**
+ * The repo-BOUND display/selection/range/collapse state to drop whenever the
+ * active repo changes (repo→repo switch via `resetForRepoSwitch`, or →null via
+ * `clearForNoRepo`). Shared by both paths so the field set cannot drift. The
+ * carryover filter fields (`searchQuery`/`author`/`dateRange`) and the
+ * repo-scoped filter fields (`branch`/`file`) are handled by each caller —
+ * they reset repo-scoped fields and preserve carryover identically.
+ */
+function _clearRepoBoundDisplay() {
+  return {
+    commits: [] as Commit[],
+    visibleCommits: [] as Commit[],
+    branches: [] as BranchInfo[],
+    tags: [] as TagInfo[],
+    currentBranch: "",
+    graphLayout: {} as Record<string, LaneInfo>,
+    laneSnapshot: null as LaneSnapshot | null,
+    selectedCommitHash: null,
+    selectedCommitHashes: [] as string[],
+    lastSelectedCommitHash: null,
+    commitFiles: [] as DiffFile[],
+    selectedFilePath: null,
+    rangeOldest: null,
+    rangeNewest: null,
+    collapsedSequenceIds: new Set<string>(),
+    collapsedIntermediates: new Map<string, string[]>(),
+    pendingSelectionFromFilter: [] as string[],
+  };
+}
+
 export const usePanelStore = create<PanelStore>((set, get) => ({
   commits: [],
   visibleCommits: [],
@@ -654,12 +684,18 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   resetForRepoSwitch() {
     const { filter } = get();
-    // Only `branch` and `file` are repo-scoped (they scope the backend Git Log
-    // query to a specific repo's refs/paths). searchQuery/author/dateRange are
-    // client-side filters over already-fetched commits and may legitimately
-    // carry across repos. Also clear collapse state (tied to the old graph) and
-    // the pending-selection restore buffer (its hashes belong to the old repo).
+    // On a repo→repo switch the old repo's display/selection/range/collapse
+    // data must be dropped IMMEDIATELY: the new repo's fetch is async, and if
+    // the old data lingered a user could act on a still-visible A commit
+    // (Checkout / Delete / Cherry-pick / open file) through a now-B-bound
+    // request — the operation would target B. Clearing here guarantees there
+    // is nothing stale to act on during B's load. Carryover (global-scope)
+    // filters `searchQuery`/`author`/`dateRange` are preserved; the repo-scoped
+    // `branch`/`file` are reset so B's Git Log isn't scoped to A's refs/paths.
+    // The repo-bound field set mirrors `clearForNoRepo` via the shared helper
+    // so the two cannot drift.
     set({
+      ..._clearRepoBoundDisplay(),
       filter: {
         searchQuery: filter.searchQuery,
         branch: "",
@@ -667,9 +703,6 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         dateRange: filter.dateRange,
         file: "",
       },
-      collapsedSequenceIds: new Set(),
-      collapsedIntermediates: new Map(),
-      pendingSelectionFromFilter: [],
     });
   },
 
@@ -677,22 +710,10 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const { filter } = get();
     // Wipe repo-bound display data + repo-scoped filter fields; keep carryover
     // (search/author/date) since they are not repo-bound and a future repo may
-    // reasonably reuse them.
+    // reasonably reuse them. `hasMore` is reset to its initial `true` (the
+    // null path leaves the panel fully empty, as if never loaded).
     set({
-      commits: [],
-      visibleCommits: [],
-      branches: [],
-      tags: [],
-      currentBranch: "",
-      graphLayout: {},
-      laneSnapshot: null,
-      selectedCommitHash: null,
-      selectedCommitHashes: [],
-      lastSelectedCommitHash: null,
-      commitFiles: [],
-      selectedFilePath: null,
-      rangeOldest: null,
-      rangeNewest: null,
+      ..._clearRepoBoundDisplay(),
       filter: {
         searchQuery: filter.searchQuery,
         branch: "",
@@ -700,9 +721,6 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         dateRange: filter.dateRange,
         file: "",
       },
-      collapsedSequenceIds: new Set(),
-      collapsedIntermediates: new Map(),
-      pendingSelectionFromFilter: [],
       hasMore: true,
     });
   },
