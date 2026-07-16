@@ -2,6 +2,12 @@
 
 ## [0.5.0] - 2026-07-15
 
+### Removed / 移除
+- **"Compare with Current" branch button** — temporarily removed the "Compare with Current" action from the Branch sidebar. It constructed invalid `jetgit-plus:/` diff URIs (the branch name was used directly as the URI path, with no `?ref=` and no `?repo=`), so `GitContentProvider` could never resolve real file content for either side and the diff was always empty; after a multi-repo switch the bare URIs also resolved against the wrong repo. It can be restored from this commit; when re-added it must build the diff URIs with `buildGitContentUri(ref, filePath, repoId)` (i.e. carry `?ref=` and `?repo=`), the same way the other diff handlers (e.g. `showIdeaShelfFileDiff`) already do. See the `TODO(future)` comment in `BranchSidebar.tsx` / 临时移除 Branch 侧边栏的「与当前分支比较」按钮。该功能构造了无效的 `jetgit-plus:/` diff URI（分支名直接作为 URI 路径，缺少 `?ref=` 和 `?repo=`），导致 `GitContentProvider` 无法解析真实文件内容、diff 始终为空；多仓库切换后这些裸 URI 还会解析到错误的仓库。可从本次提交恢复；重新加回时必须用 `buildGitContentUri(ref, filePath, repoId)` 构造 diff URI（携带 `?ref=` 和 `?repo=`），与其它 diff 处理（如 `showIdeaShelfFileDiff`）保持一致。详见 `BranchSidebar.tsx` 中的 `TODO(future)` 注释
+
+### Fixed / 修复
+- **Shelf diff URIs now tagged with `repo=`** — `showIdeaShelfFileDiff` now stamps `&repo=<repoId>` on both `jetgit-plus:/shelved/...` diff URIs (base and modified). Previously they carried only `?ref=`, so after switching repos the URIs resolved against the wrong repo via the active-repo fallback; the diff content was silently served from (or failed to resolve in) the wrong repository / 为 `showIdeaShelfFileDiff` 的两个 `jetgit-plus:/shelved/...` diff URI（base 与 modified）追加 `&repo=<repoId>`。此前只有 `?ref=`，多仓库切换后会回退到当前激活仓库，导致 diff 内容来自错误仓库或解析失败
+
 ### Changed / 变更
 - **Identity independence** — rebranded as independent extension "JetGit Plus": all `git-brains` identifiers (commands, views, view containers, URI scheme) renamed to `jetgit-plus`; publisher changed to `strNewBee`; extension ID is now `strNewBee.jetgit-plus`. The extension can now be installed alongside the upstream version without conflict / 身份独立化：所有 git-brains 标识符改为 jetgit-plus，扩展 ID 变为 strNewBee.jetgit-plus，可与上游版共存安装
 - **Version 0.5.0** — starting version line for the independent fork / 版本号升至 0.5.0，作为独立分支起点

@@ -118,7 +118,6 @@ export type CommandType =
   | "importPatchFromClipboard"
   | "createBranchPrompt"
   | "deleteBranchPrompt"
-  | "compareWithCurrent"
   | "showMyBranches"
   | "fetchAll"
   | "toggleFavorite"

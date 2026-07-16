@@ -39,12 +39,6 @@ export function BranchSidebar({
     }
   }, [selectedBranch]);
 
-  const handleCompareWithCurrent = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("compareWithCurrent", { branchName: selectedBranch });
-    }
-  }, [selectedBranch]);
-
   const handleShowMyBranches = useCallback(() => {
     bridge.request("showMyBranches");
   }, []);
@@ -115,16 +109,14 @@ export function BranchSidebar({
           <IconDelete />
         </button>
       </Tooltip>
-      <Tooltip text="Compare with Current">
-        <button
-          type="button"
-          className="branch-sidebar-btn"
-          onClick={handleCompareWithCurrent}
-          disabled={!selectedBranch}
-        >
-          <IconCompare />
-        </button>
-      </Tooltip>
+      {/* TODO(future): re-add "Compare with Current" — temporarily removed in
+          the Fix-6 multi-repo hardening commit because it built invalid
+          jetgit-plus:/ diff URIs (branch name used as the URI path, no `?ref=`,
+          no `?repo=`, so GitContentProvider could never resolve real file
+          content — and after a repo switch the bare URIs resolved against the
+          wrong repo). When re-adding, construct the two diff URIs with
+          buildGitContentUri(ref, filePath, repoId) (or carry ?ref=&repo=)
+          exactly like the other diff handlers (e.g. showIdeaShelfFileDiff). */}
       <Tooltip text="Show My Branches">
         <button
           type="button"
@@ -332,26 +324,6 @@ function IconDelete() {
         fillRule="evenodd"
         clipRule="evenodd"
         d="M7 2H9C9.55228 2 10 2.44772 10 3H6C6 2.44772 6.44772 2 7 2ZM5 3C5 1.89543 5.89543 1 7 1H9C10.1046 1 11 1.89543 11 3H13C13.5523 3 14 3.44772 14 4V5V6H13V13C13 14.1046 12.1046 15 11 15H5C3.89543 15 3 14.1046 3 13V6H2V5V4C2 3.44772 2.44772 3 3 3H5ZM11 4H10H6H5H3V5H4H12H13V4H11ZM4 6H12V13C12 13.5523 11.5523 14 11 14H5C4.44772 14 4 13.5523 4 13V6ZM6.5 7C6.22386 7 6 7.22386 6 7.5V11.5C6 11.7761 6.22386 12 6.5 12C6.77614 12 7 11.7761 7 11.5V7.5C7 7.22386 6.77614 7 6.5 7ZM9 7.5C9 7.22386 9.22386 7 9.5 7C9.77614 7 10 7.22386 10 7.5V11.5C10 11.7761 9.77614 12 9.5 12C9.22386 12 9 11.7761 9 11.5V7.5Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-/** expui/vcs/diff.svg (compare with current = diff) */
-function IconCompare() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M5.85355 8.14645C5.65829 7.95118 5.34171 7.95118 5.14645 8.14645C4.95118 8.34171 4.95118 8.65829 5.14645 8.85355L7.29289 11H0.5C0.223858 11 0 11.2239 0 11.5C0 11.7761 0.223858 12 0.5 12H7.29289L5.14645 14.1464C4.95118 14.3417 4.95118 14.6583 5.14645 14.8536C5.34171 15.0488 5.65829 15.0488 5.85355 14.8536L8.85355 11.8536L9.20711 11.5L8.85355 11.1464L5.85355 8.14645Z"
-        fill="currentColor"
-      />
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M10.1464 1.14645C10.3417 0.951185 10.6583 0.951185 10.8536 1.14645C11.0488 1.34171 11.0488 1.65829 10.8536 1.85355L8.70711 4H15.5C15.7761 4 16 4.22386 16 4.5C16 4.77614 15.7761 5 15.5 5H8.70711L10.8536 7.14645C11.0488 7.34171 11.0488 7.65829 10.8536 7.85355C10.6583 8.04882 10.3417 8.04882 10.1464 7.85355L7.14645 4.85355L6.79289 4.5L7.14645 4.14645L10.1464 1.14645Z"
         fill="currentColor"
       />
     </svg>

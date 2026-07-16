@@ -1543,10 +1543,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
       // Create virtual documents for both sides and show diff
       const baseUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base`,
+        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base&repo=${encodeURIComponent(ctx.repoId)}`,
       );
       const modifiedUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified`,
+        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified&repo=${encodeURIComponent(ctx.repoId)}`,
       );
 
       // Register temporary content for these URIs
@@ -1738,22 +1738,6 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       return { success: true };
     });
-  });
-
-  messageRouter.handle("compareWithCurrent", async (params, ctx) => {
-    if (!ctx) return NOT_GIT_REPO;
-    const { gitService } = ctx;
-    const branchName = params.branchName as string;
-    if (!branchName) return { success: false };
-    // Use VS Code's built-in git diff between current branch and selected
-    const currentBranch = await gitService.getCurrentBranch();
-    void vscode.commands.executeCommand(
-      "vscode.diff",
-      vscode.Uri.parse(`${JETGIT_PLUS_SCHEME}:/${currentBranch}`),
-      vscode.Uri.parse(`${JETGIT_PLUS_SCHEME}:/${branchName}`),
-      `${currentBranch} ↔ ${branchName}`,
-    );
-    return { success: true };
   });
 
   messageRouter.handle("showMyBranches", async (_params, ctx) => {
