@@ -149,16 +149,35 @@ export class FolderReconciler {
     folders: Array<{ fsPath: string; name: string }>,
   ): Promise<void> {
     try {
-      this.applyDiscovered(await this.discover(folders));
-      // If another change arrived while we were discovering (or while applying),
-      // run ONE more pass with the latest stashed folders. Loop until no more
-      // changes arrive so the final registry reflects the very latest folders.
-      while (this.pendingFolders !== null) {
-        const next = this.pendingFolders;
-        // Clear before re-running so a change arriving during the re-run stashes
-        // again and forces yet another pass.
-        this.pendingFolders = null;
-        this.applyDiscovered(await this.discover(next));
+      try {
+        this.applyDiscovered(await this.discover(folders));
+        // If another change arrived while we were discovering (or while
+        // applying), run ONE more pass with the latest stashed folders. Loop
+        // until no more changes arrive so the final registry reflects the very
+        // latest folders.
+        while (this.pendingFolders !== null) {
+          const next = this.pendingFolders;
+          // Clear before re-running so a change arriving during the re-run
+          // stashes again and forces yet another pass.
+          this.pendingFolders = null;
+          this.applyDiscovered(await this.discover(next));
+        }
+      } catch (err) {
+        // The reconciler is invoked fire-and-forget from the workspace-folder
+        // listener (`void reconcileFolders(...)`), so a thrown discover/apply
+        // (e.g. a permissions error scanning a folder, or a GitService ctor
+        // failure) would become an unhandled promise rejection with zero
+        // diagnostic signal. Catch + log here so the failure is at least
+        // observable in the Extension Host console; do NOT re-throw. The
+        // `finally` below still resets `running`, and `pendingFolders` is
+        // cleared (or never stashed mid-failure), so a later `reconcile()`
+        // runs normally — the registry is not wedged. (No output channel
+        // exists in this extension host; `console.error` is the established
+        // channel for host diagnostics.)
+        console.error(
+          "[jetgit-plus] folder reconciliation failed:",
+          err instanceof Error ? (err.stack ?? err) : err,
+        );
       }
     } finally {
       this.running = false;

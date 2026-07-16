@@ -243,4 +243,129 @@ describe("FolderReconciler (P2#9 folder reconciliation)", () => {
     await p;
     assert.strictEqual(calls.length, 1);
   });
+
+  it("a throwing discover does NOT wedge the reconciler: running resets, no unhandled rejection, subsequent reconcile works", async () => {
+    // I1: discoverRepos / applyDiscovered can throw (e.g. a permissions error
+    // scanning a folder, or a GitService ctor failure). The host invokes the
+    // reconciler fire-and-forget (`void reconcileFolders(...)`), so without a
+    // catch the rejection would become an unhandled promise rejection with zero
+    // diagnostic signal AND the reconciler would *appear* healthy (running
+    // resets via finally) while the registry silently goes stale.
+    //
+    // This test is non-vacuous: WITHOUT the catch in runPass, the
+    // fire-and-forget `void reconcile(...)` rejection surfaces as an
+    // `unhandledRejection` (caught by the listener below → fail), AND a
+    // subsequent reconcile() that tries to chain on `this.tail` would itself
+    // reject. With the catch, the pass resolves cleanly and the next reconcile
+    // runs normally.
+    const boom = new Error("scan permission denied");
+    const { calls, discover } = controllableDiscover();
+    const applied: DiscoveredRepo[][] = [];
+    let firstDiscover = true;
+    const reconciler = new FolderReconciler(
+      async (folders) => {
+        // First discover() throws; the follow-up (after running resets) succeeds.
+        if (firstDiscover) {
+          firstDiscover = false;
+          throw boom;
+        }
+        return discover(folders);
+      },
+      (repos) => applied.push(repos),
+    );
+
+    // Detect any rejection that escapes a fire-and-forget call — the precise
+    // I1 hazard. If the catch is missing, the dropped promise rejects here.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // Fire-and-forget, mirroring the host listener (`void reconcileFolders`).
+      // A caller that drops the promise must NOT get an unhandled rejection.
+      const p1 = reconciler.reconcile([{ fsPath: "/a", name: "a" }]);
+      // Drive the worker so the throwing discover() runs and the catch fires.
+      await drainMicrotasks();
+      // The pass resolved (did not reject) — p1 is now settled fulfilled.
+      let rejected = false;
+      p1.then(
+        () => {},
+        () => {
+          rejected = true;
+        },
+      );
+      await drainMicrotasks();
+      assert.strictEqual(rejected, false, "pass did not reject (catch held)");
+
+      // (a)+(b) no rejection escaped to the process: the failure was logged &
+      // swallowed, not propagated as an unhandled rejection. Without the catch,
+      // the fire-and-forget `void reconcile(...)` would surface here.
+      await drainMicrotasks();
+      assert.deepStrictEqual(
+        unhandled,
+        [],
+        "no unhandled rejection escaped the fire-and-forget call",
+      );
+
+      // (c) a SUBSEQUENT reconcile() runs a fresh pass normally (not wedged):
+      // since running reset, this starts a new in-flight discovery rather than
+      // being coalesced onto a dead/rejected tail.
+      const p2 = reconciler.reconcile([{ fsPath: "/b", name: "b" }]);
+      await drainMicrotasks();
+      // A fresh discovery was invoked (the throwing discover recorded nothing,
+      // so this is controllableDiscover's first recorded call).
+      assert.ok(calls.length >= 1, "follow-up discovery was invoked");
+      const lastCall = calls.at(-1);
+      assert.ok(lastCall, "follow-up discovery call exists");
+      lastCall.d.resolve([discovered("/b")]);
+      await p2;
+      assert.deepStrictEqual(
+        applied.at(-1)?.map((d) => d.descriptor.id),
+        ["/b"],
+        "subsequent reconcile applied its folders normally",
+      );
+      // Still no unhandled rejection from the follow-up.
+      assert.deepStrictEqual(
+        unhandled,
+        [],
+        "follow-up pass also produced no unhandled rejection",
+      );
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("a throwing applyDiscovered mid-pass still resolves and does not reject", async () => {
+    // Variant of I1 where the throw comes from applyDiscovered (registry
+    // mutation) rather than discover — same guarantees must hold: the pass
+    // resolves (logged + swallowed), and the caller's promise does not reject.
+    const { calls, discover } = controllableDiscover();
+    let throwOnce = true;
+    const reconciler = new FolderReconciler(discover, () => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error("GitService ctor failed");
+      }
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const p = reconciler.reconcile([{ fsPath: "/a", name: "a" }]);
+      calls[0].d.resolve([discovered("/a")]);
+      // The pass swallows+logs the apply throw; p resolves (does not reject).
+      await p;
+      await drainMicrotasks();
+      assert.deepStrictEqual(
+        unhandled,
+        [],
+        "apply throw did not escape as an unhandled rejection",
+      );
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });
