@@ -136,4 +136,64 @@ describe("MessageRouter repo context", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.strictEqual(responses[0].success, true);
   });
+
+  // F4: closing a panel is repo-agnostic (sent with { scope: "global" }, no repoId).
+  // Under strict mode it must still route to the handler, not REPO_NOT_FOUND.
+  it("routes closePushPanel without repoId in strict mode (F4)", async () => {
+    const router = new MessageRouter();
+    router.enableStrictRepoContext();
+    router.handle("closePushPanel", (async () => ({
+      closed: true,
+    })) as CommandHandler);
+    const responses: ResponseMessage[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "f4-push",
+      command: "closePushPanel",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(responses[0].success, true);
+    assert.deepStrictEqual(responses[0].data, { closed: true });
+  });
+
+  it("routes closeRollbackPanel without repoId in strict mode (F4)", async () => {
+    const router = new MessageRouter();
+    router.enableStrictRepoContext();
+    router.handle("closeRollbackPanel", (async () => ({
+      closed: true,
+    })) as CommandHandler);
+    const responses: ResponseMessage[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "f4-rollback",
+      command: "closeRollbackPanel",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(responses[0].success, true);
+    assert.deepStrictEqual(responses[0].data, { closed: true });
+  });
+
+  // Precision guard: the F4 fix must not weaken the strict gate for genuinely
+  // repo-bound commands. getBranches without repoId still rejects.
+  it("still rejects repo-bound commands without repoId in strict mode (F4 precision)", async () => {
+    const router = new MessageRouter();
+    router.enableStrictRepoContext();
+    router.setRepoResolver(() => ({ repoId: "/active" }) as RequestContext);
+    router.handle("getBranches", async () => ({ branches: [] }));
+    const responses: ResponseMessage[] = [];
+    const wv = fakeWebview((message) => responses.push(message));
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
+      type: "request",
+      id: "f4-precision",
+      command: "getBranches",
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.strictEqual(responses[0].success, false);
+    assert.strictEqual(responses[0].error?.code, "REPO_NOT_FOUND");
+  });
 });

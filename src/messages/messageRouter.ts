@@ -31,6 +31,11 @@ const REPO_AGNOSTIC_COMMANDS = new Set<CommandType>([
   "toggleShowTags",
   "getRepos",
   "selectRepo",
+  // Closing a webview panel (Push/Rollback) touches no repo and is sent
+  // with { scope: "global" } (no repoId). Must stay agnostic so the strict
+  // repo gate doesn't reject it with REPO_NOT_FOUND.
+  "closePushPanel",
+  "closeRollbackPanel",
 ]);
 
 export class MessageRouter {
