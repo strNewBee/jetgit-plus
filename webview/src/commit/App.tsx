@@ -29,18 +29,22 @@ interface RebaseState {
   totalSteps?: number;
 }
 
-function RebaseBanner() {
+export function RebaseBanner({ repoId }: { repoId: string | null }) {
   const [state, setState] = useState<RebaseState>({ isRebasing: false });
   const [loading, setLoading] = useState(false);
 
   const fetchState = useCallback(async () => {
     try {
-      const result = (await bridge.request("getRebaseState")) as RebaseState;
+      const result = (await bridge.request(
+        "getRebaseState",
+        {},
+        { repoId: repoId ?? undefined },
+      )) as RebaseState;
       setState(result);
     } catch {
       setState({ isRebasing: false });
     }
-  }, []);
+  }, [repoId]);
 
   useEffect(() => {
     fetchState();
@@ -56,18 +60,26 @@ function RebaseBanner() {
     async (action: "continue" | "abort" | "skip") => {
       setLoading(true);
       try {
-        await bridge.request("rebaseAction", { action });
+        await bridge.request(
+          "rebaseAction",
+          { action },
+          { repoId: repoId ?? undefined },
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         bridge
-          .request("showErrorNotification", { message: msg })
+          .request(
+            "showErrorNotification",
+            { message: msg },
+            { scope: "global" },
+          )
           .catch(() => {});
       } finally {
         setLoading(false);
         fetchState();
       }
     },
-    [fetchState],
+    [fetchState, repoId],
   );
 
   if (!state.isRebasing) return null;
@@ -182,7 +194,7 @@ interface CherryPickStateInfo {
   cherryPickHead?: string;
 }
 
-function CherryPickBanner() {
+export function CherryPickBanner({ repoId }: { repoId: string | null }) {
   const [state, setState] = useState<CherryPickStateInfo>({
     isCherryPicking: false,
   });
@@ -192,12 +204,14 @@ function CherryPickBanner() {
     try {
       const result = (await bridge.request(
         "getCherryPickState",
+        {},
+        { repoId: repoId ?? undefined },
       )) as CherryPickStateInfo;
       setState(result);
     } catch {
       setState({ isCherryPicking: false });
     }
-  }, []);
+  }, [repoId]);
 
   useEffect(() => {
     fetchState();
@@ -213,18 +227,26 @@ function CherryPickBanner() {
     async (action: "continue" | "abort" | "skip") => {
       setLoading(true);
       try {
-        await bridge.request("cherryPickAction", { action });
+        await bridge.request(
+          "cherryPickAction",
+          { action },
+          { repoId: repoId ?? undefined },
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         bridge
-          .request("showErrorNotification", { message: msg })
+          .request(
+            "showErrorNotification",
+            { message: msg },
+            { scope: "global" },
+          )
           .catch(() => {});
       } finally {
         setLoading(false);
         fetchState();
       }
     },
-    [fetchState],
+    [fetchState, repoId],
   );
 
   if (!state.isCherryPicking) return null;
@@ -357,18 +379,22 @@ function CherryPickBanner() {
   );
 }
 
-function MergeBanner() {
+export function MergeBanner({ repoId }: { repoId: string | null }) {
   const [state, setState] = useState<MergeStateInfo>({ isMerging: false });
   const [loading, setLoading] = useState(false);
 
   const fetchState = useCallback(async () => {
     try {
-      const result = (await bridge.request("getMergeState")) as MergeStateInfo;
+      const result = (await bridge.request(
+        "getMergeState",
+        {},
+        { repoId: repoId ?? undefined },
+      )) as MergeStateInfo;
       setState(result);
     } catch {
       setState({ isMerging: false });
     }
-  }, []);
+  }, [repoId]);
 
   useEffect(() => {
     fetchState();
@@ -384,35 +410,55 @@ function MergeBanner() {
     setLoading(true);
     try {
       // Check if there are unresolved conflicts
-      const conflicts = (await bridge.request("getConflictFiles")) as string[];
+      const conflicts = (await bridge.request(
+        "getConflictFiles",
+        {},
+        { repoId: repoId ?? undefined },
+      )) as string[];
       if (conflicts && conflicts.length > 0) {
         // Open conflicts panel to let user resolve
-        await bridge.request("openConflictsPanel");
+        await bridge.request(
+          "openConflictsPanel",
+          {},
+          { repoId: repoId ?? undefined },
+        );
       } else {
         // All conflicts resolved, commit
-        await bridge.request("mergeAction", { action: "continue" });
+        await bridge.request(
+          "mergeAction",
+          { action: "continue" },
+          { repoId: repoId ?? undefined },
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+      bridge
+        .request("showErrorNotification", { message: msg }, { scope: "global" })
+        .catch(() => {});
     } finally {
       setLoading(false);
       fetchState();
     }
-  }, [fetchState]);
+  }, [fetchState, repoId]);
 
   const handleAbort = useCallback(async () => {
     setLoading(true);
     try {
-      await bridge.request("mergeAction", { action: "abort" });
+      await bridge.request(
+        "mergeAction",
+        { action: "abort" },
+        { repoId: repoId ?? undefined },
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      bridge.request("showErrorNotification", { message: msg }).catch(() => {});
+      bridge
+        .request("showErrorNotification", { message: msg }, { scope: "global" })
+        .catch(() => {});
     } finally {
       setLoading(false);
       fetchState();
     }
-  }, [fetchState]);
+  }, [fetchState, repoId]);
 
   if (!state.isMerging) return null;
 
@@ -522,6 +568,7 @@ export function CommitApp() {
   const setActiveTab = useCommitStore((s) => s.setActiveTab);
   const loading = useCommitStore((s) => s.loading);
   const repos = useRepoStore((s) => s.repos);
+  const activeRepoId = useRepoStore((s) => s.activeRepoId);
 
   useEffect(() => {
     subscribeRepoEvents();
@@ -586,9 +633,18 @@ export function CommitApp() {
           Stash
         </button>
       </div>
-      <RebaseBanner />
-      <CherryPickBanner />
-      <MergeBanner />
+      <RebaseBanner
+        key={`rebase-${activeRepoId ?? "none"}`}
+        repoId={activeRepoId}
+      />
+      <CherryPickBanner
+        key={`cherry-${activeRepoId ?? "none"}`}
+        repoId={activeRepoId}
+      />
+      <MergeBanner
+        key={`merge-${activeRepoId ?? "none"}`}
+        repoId={activeRepoId}
+      />
       <ProgressBar visible={loading} />
       <div className="commit-content">
         {activeTab === "commit" && <CommitTab />}
