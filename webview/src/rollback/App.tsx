@@ -3,11 +3,11 @@ import CodiconListFlat from "~icons/codicon/list-flat";
 import CodiconListTree from "~icons/codicon/list-tree";
 import { bridge } from "../shared/bridge";
 import { FileTree, type FileTreeNode } from "../shared/components/FileTree";
-import { useOperationRepoBinding } from "../shared/hooks/useOperationRepoBinding";
+import { useRepoBoundOperation } from "../shared/hooks/useRepoBoundOperation";
 import type { DiffFile } from "../shared/types/git";
 import "./rollback.css";
 
-interface RollbackFileInfo {
+export interface RollbackFileInfo {
   path: string;
   status: string;
   staged: boolean;
@@ -51,11 +51,29 @@ export function RollbackApp() {
   const rollingRef = useRef(rolling);
   rollingRef.current = rolling;
 
-  // Load file list for the current repo context. Used both for the initial
-  // mount (via the binding hook) and when the active repo changes.
+  // `loadRepo` needs the hook's bound `request`, and the hook needs `loadRepo`
+  // as its idle-follow callback. Break the cycle with a ref: the hook calls a
+  // stable wrapper that delegates to the latest `loadRepo` via the ref, so
+  // `loadRepo` can be defined AFTER the hook (and thus use its `request`).
+  const loadRepoRef = useRef<(() => Promise<void>) | null>(null);
+  const onFollowRepo = useCallback((_repoId: string | null) => {
+    // Delegate to the latest loadRepo; no-op if it hasn't been assigned yet.
+    // The repoId is ignored here because the bound `request` already carries
+    // the authoritative repo (the hook bumped bridge context before calling).
+    return loadRepoRef.current?.();
+  }, []);
+
+  // Authoritative repo binding + bound request. `busy = rolling` (rollback is
+  // atomic — no rejected/recovery flow). Every repo-bound request goes through
+  // `request` so it carries the panel's authoritative repoId.
+  const { request, bindRepo } = useRepoBoundOperation(rolling, onFollowRepo);
+
+  // Load file list for the bound repo. Used both for the initial idle-follow
+  // (via the hook) and when the active repo changes. Every request goes through
+  // the bound `request` so it carries the panel's authoritative repoId.
   const loadRepo = useCallback(async () => {
     try {
-      const result = (await bridge.request("getWorkingTreeChanges")) as
+      const result = (await request("getWorkingTreeChanges")) as
         | RollbackFileInfo[]
         | { status: string }
         | null;
@@ -78,27 +96,37 @@ export function RollbackApp() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
-
-  // Idle-follow / execution-bound repo lifecycle: while a rollback is running,
-  // active-repo changes are deferred and only the latest is applied when idle.
-  useOperationRepoBinding(rolling, loadRepo);
+  }, [request]);
+  // Wire the ref so the hook's onFollow wrapper reaches the real loadRepo.
+  loadRepoRef.current = loadRepo;
 
   // Listen for re-init events (when panel is reused). Ignored while a rollback
-  // is in progress so the in-flight operation is not disturbed.
+  // is in progress so the in-flight operation is not disturbed. This is the
+  // authoritative rebind path: bindRepo(payload.repoId) sets the panel's repo
+  // (and bumps the bridge context synchronously) so subsequent requests target
+  // the newly revealed repo, not whatever the ambient context was bound to. The
+  // file list is reloaded through the bound request (NOT the raw payload) so
+  // the displayed files are guaranteed to match the bound repo.
   useEffect(() => {
     return bridge.onEvent((event, data) => {
       if (event !== "rollbackPanelInit") return;
       if (rollingRef.current) return;
-      const { files: newFiles } = data as { files: RollbackFileInfo[] };
-      setFiles(newFiles);
-      setCheckedFiles(new Set(newFiles.map((f) => f.path)));
+      const payload = data as { repoId?: string; files?: RollbackFileInfo[] };
+      // Rebind to the host-supplied repo FIRST (bumps generation so any stale
+      // in-flight response from the previous repo is dropped), then reload the
+      // file list through the bound request. The payload may seed initial
+      // display, but the authoritative list comes from getWorkingTreeChanges
+      // stamped with the bound repoId.
+      if (payload.repoId !== undefined) {
+        bindRepo(payload.repoId);
+      }
       setError(null);
       setRolling(false);
       setDeleteLocalCopies(false);
       setCollapsed({});
+      void loadRepo();
     });
-  }, []);
+  }, [loadRepo, bindRepo]);
 
   const handleToggleFile = useCallback((path: string) => {
     setCheckedFiles((prev) => {
@@ -127,7 +155,7 @@ export function RollbackApp() {
     setRolling(true);
     setError(null);
     try {
-      await bridge.request("executeRollback", {
+      await request("executeRollback", {
         filePaths,
         deleteLocalCopies,
       });
@@ -136,10 +164,11 @@ export function RollbackApp() {
       setRolling(false);
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [checkedFiles, deleteLocalCopies]);
+  }, [checkedFiles, deleteLocalCopies, request]);
 
   const handleCancel = useCallback(() => {
-    bridge.request("closeRollbackPanel");
+    // Repo-agnostic control-plane call → { scope: "global" } (no repoId).
+    bridge.request("closeRollbackPanel", {}, { scope: "global" });
   }, []);
 
   // Convert RollbackFileInfo[] to DiffFile[] for FileTree
