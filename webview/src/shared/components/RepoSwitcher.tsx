@@ -1,82 +1,153 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import CodiconChevronDown from "~icons/codicon/chevron-down";
+import type { RepoDescriptorView } from "../store/repo-store";
 import { useRepoStore } from "../store/repo-store";
+import "./RepoSwitcher.css";
+
+function pathHint(repo: RepoDescriptorView): string {
+  const parts = repo.rootPath.split(/[\\/]/).filter(Boolean);
+  if (parts.length === 0) return repo.rootPath;
+
+  // A workspace folder commonly has the same leaf name as the repository.
+  // In that case the parent is the useful disambiguator (for example
+  // …/log-platform vs …/log-view), matching the compact JetBrains-style list.
+  const leaf = parts.at(-1) ?? repo.rootPath;
+  const context =
+    leaf === repo.name && parts.length > 1 ? (parts.at(-2) ?? leaf) : leaf;
+  return `…/${context}`;
+}
 
 export function RepoSwitcher({ disabled = false }: { disabled?: boolean }) {
   const { repos, activeRepoId, select } = useRepoStore();
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
+
+  const close = useCallback((restoreFocus = false) => {
+    setOpen(false);
+    setFilter("");
+    if (restoreFocus) toggleRef.current?.focus();
+  }, []);
 
   useEffect(() => {
-    if (repos.length <= 1) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node))
-        setOpen(false);
+    if (!open) return;
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) close();
     };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [repos.length]);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close(true);
+    };
 
-  if (repos.length <= 1) return null; // single repo: no switcher
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, close]);
 
-  const active = repos.find((r) => r.id === activeRepoId);
-  const nameCounts = new Map<string, number>();
-  for (const r of repos)
-    nameCounts.set(r.name, (nameCounts.get(r.name) ?? 0) + 1);
-  const label = (r: { name: string; rootPath: string }) => {
-    if ((nameCounts.get(r.name) ?? 0) <= 1) return r.name;
-    const shortPath = r.rootPath
-      .split(/[\\/]/)
-      .filter(Boolean)
-      .slice(-2)
-      .join("/");
-    return `${r.name} (${shortPath})`;
-  };
+  useEffect(() => {
+    if (open) filterRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled || repos.length <= 1) close();
+  }, [disabled, repos.length, close]);
+
+  if (repos.length <= 1) return null;
+
+  const active = repos.find((repo) => repo.id === activeRepoId);
+  const normalizedFilter = filter.trim().toLocaleLowerCase();
+  const filteredRepos = repos.filter((repo) => {
+    if (!normalizedFilter) return true;
+    return `${repo.name} ${repo.rootPath} ${pathHint(repo)}`
+      .toLocaleLowerCase()
+      .includes(normalizedFilter);
+  });
 
   return (
-    <div className="repo-switcher" ref={ref} style={{ position: "relative" }}>
-      <button
-        type="button"
-        disabled={disabled}
-        title={
-          disabled
-            ? "Wait for loading or the current operation to finish"
-            : undefined
-        }
-        onClick={() => setOpen((v) => !v)}
-      >
-        {active ? label(active) : "—"} ▾
-      </button>
-      {open && (
-        <ul
-          style={{
-            position: "absolute",
-            zIndex: 10,
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
+    <div className="repo-switcher" ref={ref}>
+      <span className="repo-switcher__label">Repo:</span>
+      <div className="repo-switcher__control">
+        <button
+          ref={toggleRef}
+          type="button"
+          className="repo-switcher__trigger"
+          disabled={disabled}
+          title={
+            disabled
+              ? "Wait for loading or the current operation to finish"
+              : active?.rootPath
+          }
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={`Switch repository, current: ${active?.name ?? "none"}`}
+          onClick={() => {
+            if (open) close();
+            else setOpen(true);
           }}
         >
-          {repos.map((r) => (
-            <li key={r.id}>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  setOpen(false);
-                  if (r.id !== activeRepoId) void select(r.id);
-                }}
-                style={{
-                  fontWeight: r.id === activeRepoId ? "bold" : "normal",
-                }}
-              >
-                {label(r)}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+          <span className="repo-switcher__current-name">
+            {active?.name ?? "—"}
+          </span>
+          <CodiconChevronDown
+            aria-hidden="true"
+            className={`repo-switcher__chevron ${open ? "repo-switcher__chevron--open" : ""}`}
+          />
+        </button>
+
+        {open && (
+          <div className="repo-switcher__popover">
+            <input
+              ref={filterRef}
+              className="repo-switcher__filter"
+              type="text"
+              value={filter}
+              placeholder="Filter Repos..."
+              aria-label="Filter repositories"
+              spellCheck={false}
+              onChange={(event) => setFilter(event.target.value)}
+            />
+            <ul className="repo-switcher__list" role="listbox">
+              {filteredRepos.map((repo) => {
+                const hint = pathHint(repo);
+                const activeRepo = repo.id === activeRepoId;
+                return (
+                  <li
+                    key={repo.id}
+                    className="repo-switcher__item"
+                    role="option"
+                    aria-selected={activeRepo}
+                  >
+                    <button
+                      type="button"
+                      className={`repo-switcher__option ${activeRepo ? "repo-switcher__option--active" : ""}`}
+                      disabled={disabled}
+                      title={repo.rootPath}
+                      aria-label={`Select repository ${repo.name}, ${hint}`}
+                      onClick={() => {
+                        close();
+                        if (!activeRepo) void select(repo.id);
+                      }}
+                    >
+                      <span className="repo-switcher__repo-name">
+                        {repo.name}
+                      </span>
+                      <span className="repo-switcher__repo-path">{hint}</span>
+                    </button>
+                  </li>
+                );
+              })}
+              {filteredRepos.length === 0 && (
+                <li className="repo-switcher__empty">No matching repos</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,0 +1,166 @@
+.repo-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 440px);
+  min-width: 0;
+}
+
+.repo-switcher__label {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, var(--description-fg));
+  font-weight: 600;
+  line-height: 26px;
+}
+
+.repo-switcher__control {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+button.repo-switcher__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px 0 10px;
+  border: 1px solid
+    var(--vscode-dropdown-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 6px;
+  background: var(--vscode-button-background, var(--button-bg));
+  color: var(--vscode-button-foreground, var(--button-fg));
+  font-weight: 500;
+  text-align: left;
+}
+
+button.repo-switcher__trigger:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--button-hover-bg));
+}
+
+button.repo-switcher__trigger:focus-visible,
+.repo-switcher__filter:focus {
+  border-color: var(--vscode-focusBorder, #007fd4);
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.repo-switcher__current-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-switcher__chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+
+.repo-switcher__chevron--open {
+  transform: rotate(180deg);
+}
+
+.repo-switcher__popover {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: 1000;
+  width: min(360px, calc(100vw - 24px));
+  min-width: 100%;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid var(--vscode-dropdown-border, var(--border));
+  border-radius: 6px;
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, var(--app-fg));
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.28);
+}
+
+.repo-switcher__filter {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 3px 7px;
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 3px;
+  background: var(--vscode-input-background, var(--input-bg));
+  color: var(--vscode-input-foreground, var(--input-fg));
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+}
+
+.repo-switcher__filter::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--description-fg));
+}
+
+.repo-switcher__list {
+  max-height: 240px;
+  margin: 4px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.repo-switcher__item {
+  margin: 0;
+  padding: 0;
+}
+
+button.repo-switcher__option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 32px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-dropdown-foreground, var(--app-fg));
+  text-align: left;
+}
+
+button.repo-switcher__option:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground, var(--hover-bg));
+  color: var(--vscode-list-hoverForeground, var(--app-fg));
+}
+
+button.repo-switcher__option--active,
+button.repo-switcher__option--active:hover:not(:disabled) {
+  background: var(--vscode-button-background, var(--button-bg));
+  color: var(--vscode-button-foreground, var(--button-fg));
+}
+
+.repo-switcher__repo-name,
+.repo-switcher__repo-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-switcher__repo-name {
+  font-weight: 600;
+}
+
+.repo-switcher__repo-path {
+  max-width: 140px;
+  color: var(--vscode-descriptionForeground, var(--description-fg));
+}
+
+.repo-switcher__option--active .repo-switcher__repo-path {
+  color: currentColor;
+  opacity: 0.8;
+}
+
+.repo-switcher__empty {
+  padding: 10px 8px;
+  color: var(--vscode-descriptionForeground, var(--description-fg));
+  text-align: center;
+}
