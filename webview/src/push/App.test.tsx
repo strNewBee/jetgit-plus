@@ -20,9 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * and emit events via the captured `onEvent` listener.
  */
 const mocks = vi.hoisted(() => {
-  const eventListener: {
-    current: ((event: string, data: unknown) => void) | null;
-  } = { current: null };
+  // Mirror the REAL bridge (vscode-bridge.ts): onEvent registers handlers into
+  // a Set and an emit broadcasts to ALL of them. The previous mock kept only
+  // the LAST handler in a single slot, which silently dropped the hook's
+  // activeRepoChanged listener once Push's pushPanelInit listener subscribed —
+  // making the two-listener interleaving untestable. With a Set, both
+  // listeners coexist and BOTH fire on emit (each filters by event name).
+  const eventListeners = new Set<(event: string, data: unknown) => void>();
   const setRepoContext = vi.fn();
   // Per-command responder so tests can return canned getBranches / getAheadCommits
   // payloads. Default resolves undefined.
@@ -39,13 +43,13 @@ const mocks = vi.hoisted(() => {
   );
   const onEvent = vi.fn(
     (handler: (event: string, data: unknown) => void): (() => void) => {
-      eventListener.current = handler;
+      eventListeners.add(handler);
       return () => {
-        if (eventListener.current === handler) eventListener.current = null;
+        eventListeners.delete(handler);
       };
     },
   );
-  return { setRepoContext, request, onEvent, eventListener, responders };
+  return { setRepoContext, request, onEvent, eventListeners, responders };
 });
 
 vi.mock("../shared/bridge", () => ({
@@ -58,10 +62,10 @@ vi.mock("../shared/bridge", () => ({
 
 import { PushApp } from "./App";
 
-const { setRepoContext, request, onEvent, eventListener, responders } = mocks;
+const { setRepoContext, request, onEvent, eventListeners, responders } = mocks;
 
 function emit(event: string, data: unknown) {
-  eventListener.current?.(event, data);
+  for (const h of eventListeners) h(event, data);
 }
 
 /** Set (or clear) host-supplied seed attributes on #root. */
@@ -98,12 +102,12 @@ describe("PushApp re-init binding", () => {
     setRepoContext.mockReset();
     request.mockClear();
     onEvent.mockClear();
-    eventListener.current = null;
+    eventListeners.clear();
     for (const k of Object.keys(responders)) delete responders[k];
   });
   afterEach(() => {
     cleanup();
-    eventListener.current = null;
+    eventListeners.clear();
   });
 
   it("a pushPanelInit{repoId:'B'} re-init while idle rebinds so the next repo-bound request carries repoId 'B'", async () => {
@@ -193,12 +197,12 @@ describe("PushApp header repo label (Task 25)", () => {
     setRepoContext.mockReset();
     request.mockClear();
     onEvent.mockClear();
-    eventListener.current = null;
+    eventListeners.clear();
     for (const k of Object.keys(responders)) delete responders[k];
   });
   afterEach(() => {
     cleanup();
-    eventListener.current = null;
+    eventListeners.clear();
   });
 
   it("renders the seeded data-repo-name in the header", async () => {
@@ -284,12 +288,12 @@ describe("PushApp rejected-dialog re-init deferral (F2)", () => {
     setRepoContext.mockReset();
     request.mockClear();
     onEvent.mockClear();
-    eventListener.current = null;
+    eventListeners.clear();
     for (const k of Object.keys(responders)) delete responders[k];
   });
   afterEach(() => {
     cleanup();
-    eventListener.current = null;
+    eventListeners.clear();
   });
 
   it("a pushPanelInit{repoId:'B'} during A's rejected dialog does NOT rebind, and recovery pins repoId 'A'", async () => {
@@ -380,6 +384,104 @@ describe("PushApp rejected-dialog re-init deferral (F2)", () => {
         (document.querySelector(".push-repo-name") as HTMLElement | null)
           ?.textContent,
       ).toBe("B-name");
+    });
+  });
+
+  // Fix-11 (Important #4): the Push panel has TWO independent deferred-repo
+  // queues — the hook's pendingRepoRef (for activeRepoChanged) and Push's own
+  // pendingReInitRef (for pushPanelInit) — that both drain when the panel goes
+  // idle, in React effect-registration order (the hook's drain runs FIRST, then
+  // Push's drain runs LAST). Before the shared-monotonic-seq fix, a stale
+  // pushPanelInit(B) stashed EARLIER could override a NEWER activeRepoChanged(C)
+  // because Push's drain applied last, leaving the panel bound to B while the
+  // global active repo was C — a wrong-repo-operation window. The fix stamps a
+  // shared seq at arrival at BOTH points and claim-gates application so the
+  // LAST-ARRIVED event wins regardless of drain order.
+  it("Fix-11: a stale pushPanelInit(B) then a newer activeRepoChanged(C) while busy ends on C (latest wins, regardless of drain order)", async () => {
+    seedRoot({
+      repoId: "A",
+      branch: "main",
+      remote: "origin",
+      repoName: "A-name",
+    });
+    responders.getAheadCommits = () => ({
+      commits: [{ hash: "h1", subject: "s", refs: [] }],
+    });
+    responders.executePush = () => {
+      throw new Error("![rejected] non-fast-forward");
+    };
+
+    render(<PushApp />);
+
+    // Enable + trigger the rejected push for repo A so the dialog opens (busy).
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-split-main") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+    (document.querySelector(".push-split-main") as HTMLButtonElement).click();
+    await waitFor(() => {
+      expect(document.querySelector(".push-rejected-dialog")).toBeTruthy();
+    });
+
+    // --- While busy: B arrives FIRST (lower seq), then C arrives SECOND
+    //     (higher seq). Pre-fix, Push's drain would apply B last and win. The
+    //     seq gate must make C (last-arrived) win instead.
+    setRepoContext.mockClear();
+    request.mockClear();
+    emit("pushPanelInit", {
+      repoId: "B",
+      repoName: "B-name",
+      branchName: "feature",
+      remote: "up",
+    });
+    emit("activeRepoChanged", {
+      repo: { id: "C" },
+      repoName: "C-name",
+    });
+
+    // Both events are deferred while the dialog is open: no rebind yet.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setRepoContext).not.toHaveBeenCalledWith("B");
+    expect(setRepoContext).not.toHaveBeenCalledWith("C");
+
+    // --- Dismiss the dialog via Cancel: pushRejected.show flips false while
+    //     pushing stays false, so both drains fire on this commit. This is the
+    //     exact busy→idle transition where the two queues race. NOTE: scoped to
+    //     `.push-rejected-dialog` because the footer also has a Cancel button
+    //     (`.push-btn-secondary`) that calls closePushPanel instead of clearing
+    //     the dialog — it would NOT trigger the busy→idle drain.
+    responders.getAheadCommits = () => ({ commits: [] });
+    // Provide a getBranches response so the hook's onFollow→loadRepo proceeds
+    // past its early-return and issues a repo-bound request we can inspect.
+    responders.getBranches = () => [
+      { name: "main", isCurrent: true, upstream: "origin/main" },
+    ];
+    (
+      document.querySelector(
+        ".push-rejected-dialog .push-btn-secondary",
+      ) as HTMLButtonElement
+    ).click();
+
+    // LATEST WINS: the panel must end on C, NOT B. The hook's applyAt for C has
+    // the higher seq, so Push's stale applyReInit(B) is rejected by claimSeq.
+    await waitFor(() => {
+      expect(setRepoContext).toHaveBeenCalledWith("C");
+    });
+    // The stale B re-init must NOT have applied (it was superseded by C).
+    expect(setRepoContext).not.toHaveBeenCalledWith("B");
+    // Header reflects C, the last-arrived event.
+    await waitFor(() => {
+      expect(
+        (document.querySelector(".push-repo-name") as HTMLElement | null)
+          ?.textContent,
+      ).toBe("C-name");
+    });
+    // And the next repo-bound request the panel issues carries repoId "C"
+    // (loadRepo fires from the hook's onFollow after applyAt rebinds to C).
+    await waitFor(() => {
+      expect(lastCall("getBranches")?.[2]).toMatchObject({ repoId: "C" });
     });
   });
 });

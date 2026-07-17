@@ -116,9 +116,14 @@ export function PushApp() {
   // OR while the rejected dialog is open — is stashed here and replayed once
   // the panel goes idle. Only the newest payload wins (each stash overwrites).
   // Replaying happens in the drain effect below, which calls the same
-  // `applyReInit` the listener uses. `undefined` = nothing pending.
+  // `applyReInit` the listener uses. `seq` is the shared monotonic sequence
+  // number stamped at ARRIVAL (via the hook's `nextSeq`), so a stashed re-init
+  // competes on the SAME latest-wins ordering as the hook's `activeRepoChanged`
+  // — whichever arrived last wins, regardless of drain order. `undefined` =
+  // nothing pending.
   const pendingReInitRef = useRef<
     | {
+        seq: number;
         repoId: string;
         repoName?: string;
         branchName?: string;
@@ -172,10 +177,8 @@ export function PushApp() {
   // to recover — otherwise switching the active repo mid-dialog would re-bind
   // the bridge away from the rejected repo before the recovery handler runs.
   // `busy = pushing || pushRejected.show`.
-  const { repoId, repoName, request, bindRepo } = useRepoBoundOperation(
-    pushing || pushRejected.show,
-    onFollowRepo,
-  );
+  const { repoId, repoName, request, bindRepo, nextSeq, claimSeq } =
+    useRepoBoundOperation(pushing || pushRejected.show, onFollowRepo);
 
   const loadAheadCommits = useCallback(
     async (branch: string, remote: string) => {
@@ -248,13 +251,26 @@ export function PushApp() {
   // the bound request. The label travels through the hook so the header stays
   // in lockstep. Shared by both the re-init listener and the drain effect so
   // there is no drift between the two paths.
+  //
+  // `seq` is the shared monotonic sequence number stamped at arrival (via the
+  // hook's `nextSeq`). The FIRST line is the latest-wins gate: if a newer
+  // binding event (e.g. an `activeRepoChanged` that arrived AFTER this re-init)
+  // already applied via the hook, `claimSeq` returns false and this stale
+  // re-init is SKIPPED — its branch/remote must NOT override the newer repo.
+  // This is what unifies Push's deferred re-init queue with the hook's
+  // deferred activeRepoChanged queue: whichever arrived LAST wins, regardless
+  // of which drain effect runs last.
   const applyReInit = useCallback(
-    (payload: {
-      repoId?: string;
-      repoName?: string;
-      branchName?: string;
-      remote?: string;
-    }) => {
+    (
+      seq: number,
+      payload: {
+        repoId?: string;
+        repoName?: string;
+        branchName?: string;
+        remote?: string;
+      },
+    ) => {
+      if (!claimSeq(seq)) return;
       if (payload.repoId !== undefined) {
         bindRepo(payload.repoId, payload.repoName?.trim() ?? "");
       }
@@ -268,7 +284,7 @@ export function PushApp() {
       setCollapsed({});
       void loadAheadCommits(branch, remote);
     },
-    [bindRepo, loadAheadCommits],
+    [claimSeq, bindRepo, loadAheadCommits],
   );
 
   // Listen for re-init events (when panel is reused). Deferred while the panel
@@ -288,10 +304,17 @@ export function PushApp() {
         repoId?: string;
         repoName?: string;
       };
+      // Stamp a shared seq at ARRIVAL so this re-init competes on the SAME
+      // latest-wins ordering as the hook's activeRepoChanged. Whichever event
+      // arrives LAST has the higher seq and wins application, regardless of
+      // which deferred queue drains first.
+      const seq = nextSeq();
       if (pushingRef.current || pushRejectedShowRef.current) {
         // Stash only the newest re-init payload (each overwrites). Must include
         // repoId so applyReInit can rebind; keep the rest for branch/remote.
+        // `seq` is carried so the drain re-runs the latest-wins gate.
         pendingReInitRef.current = {
+          seq,
           repoId: payload.repoId ?? "",
           repoName: payload.repoName,
           branchName: payload.branchName,
@@ -299,19 +322,27 @@ export function PushApp() {
         };
         return;
       }
-      applyReInit(payload);
+      applyReInit(seq, payload);
     });
-  }, [applyReInit]);
+  }, [nextSeq, applyReInit]);
 
   // Drain a deferred re-init once the panel is fully idle (not pushing AND the
   // rejected dialog closed). Keyed on both busy flags so it fires exactly when
-  // the panel transitions back to idle while a re-init is pending.
+  // the panel transitions back to idle while a re-init is pending. The stashed
+  // `seq` is forwarded to applyReInit, which re-runs the latest-wins gate: if
+  // a newer activeRepoChanged already applied via the hook, this stale re-init
+  // is skipped (its branch/remote must not override the newer repo).
   useEffect(() => {
     if (pushing || pushRejected.show) return;
-    const payload = pendingReInitRef.current;
-    if (payload === undefined) return;
+    const pending = pendingReInitRef.current;
+    if (pending === undefined) return;
     pendingReInitRef.current = undefined;
-    applyReInit(payload);
+    applyReInit(pending.seq, {
+      repoId: pending.repoId,
+      repoName: pending.repoName,
+      branchName: pending.branchName,
+      remote: pending.remote,
+    });
   }, [pushing, pushRejected.show, applyReInit]);
 
   useEffect(() => {

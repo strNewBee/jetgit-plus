@@ -2,8 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { bridge } from "../bridge";
 import type { CommandType, RequestOptions } from "../bridge/types";
 
-/** A pending deferred repo: its id AND its disambiguated label land together. */
+/**
+ * A pending deferred repo: its id AND its disambiguated label land together.
+ * `seq` is the shared monotonic sequence number stamped at ARRIVAL (see
+ * `seqRef`), so this hook's `activeRepoChanged` and Push's `pushPanelInit`
+ * can compete on a single latest-wins ordering — the LAST-ARRIVED event wins
+ * regardless of which deferred queue drains first.
+ */
 interface PendingRepo {
+  seq: number;
   id: string | null;
   name: string;
 }
@@ -33,7 +40,18 @@ interface PendingRepo {
  *   would point a destructive action at the wrong repo.
  * - `bindRepo(id, name?)` is the re-init entry point used by the panel's
  *   host-message listener; it routes through the same `setRepo` so context +
- *   state stay in lockstep.
+ *   state stay in lockstep. It is intentionally NOT seq-gated (see below).
+ * - Latest-wins seq: every binding event arrival (this hook's
+ *   `activeRepoChanged`, and — via the exported `nextSeq`/`claimSeq` helpers —
+ *   Push's `pushPanelInit`) stamps a monotonic seq at ARRIVAL. Application is
+ *   claim-gated (`applyAt`/`claimSeq`): an event applies ONLY if its seq is
+ *   strictly greater than the last-applied seq, so the LAST-ARRIVED event wins
+ *   regardless of which deferred queue drains first. Single-queue callers
+ *   (Rollback/Conflicts) are unaffected: their pending stash always holds the
+ *   latest arrival, whose seq strictly exceeds lastApplied → claim always
+ *   succeeds. The gate only changes behavior when TWO independent deferred
+ *   sources compete (Push's case). `bindRepo`/`setRepo` are NOT seq-gated
+ *   because they are imperative setters, not events.
  *
  * The explicit `repoId` in each request is the guarantee; the ambient
  * `setRepoContext` call (driven synchronously here) keeps the bridge's existing
@@ -51,12 +69,41 @@ export function useRepoBoundOperation(
     opts?: RequestOptions,
   ) => Promise<T>;
   bindRepo: (repoId: string | null, repoName?: string) => void;
+  /**
+   * Allocate the next monotonic seq number, for a panel that competes on the
+   * SAME latest-wins ordering as this hook's `activeRepoChanged` (Push's
+   * `pushPanelInit`). The caller stamps the returned seq at ARRIVAL, then asks
+   * `claimSeq` whether it may apply. Exported so the two deferred-repo queues
+   * agree on which event arrived last, regardless of drain order.
+   */
+  nextSeq: () => number;
+  /**
+   * Claim a seq for application. Returns true iff `seq` is strictly greater
+   * than the last-applied seq (and, as a side effect, records it as applied).
+   * This is the latest-wins gate: a stale event whose seq has already been
+   * overtaken is rejected, so it cannot override a newer binding.
+   */
+  claimSeq: (seq: number) => boolean;
 } {
   const busyRef = useRef(busy);
   const onFollowRef = useRef(onFollow);
-  // undefined sentinel = no pending event; a { id, name } object = a pending
-  // (possibly null) repo. The pending repo's id and label travel together so a
-  // deferred switch can never apply a new id with a stale name.
+  // Shared monotonic sequence counter for ALL binding events that can switch
+  // this hook's repo — this hook's own `activeRepoChanged` AND Push's
+  // `pushPanelInit` (via the exported nextSeq/claimSeq helpers). Every arrival
+  // stamps ++seqRef.current, so whichever event arrives LAST has the highest
+  // seq and wins application regardless of which deferred queue drains first.
+  // Single-queue callers (Rollback/Conflicts) are unaffected: their pending
+  // stash always holds the latest arrival, whose seq strictly exceeds
+  // lastAppliedSeqRef, so their claim always succeeds (no behavior change).
+  const seqRef = useRef(0);
+  // The highest seq that has been ALLOWED to apply so far. `applyAt` and
+  // `claimSeq` both gate on `seq > lastAppliedSeqRef.current` so a stale event
+  // (lower seq) is skipped once a newer one has applied.
+  const lastAppliedSeqRef = useRef(0);
+  // undefined sentinel = no pending event; a { seq, id, name } object = a
+  // pending (possibly null) repo. The pending repo's id and label travel
+  // together so a deferred switch can never apply a new id with a stale name.
+  // `seq` is stamped at arrival so the drain can re-run the latest-wins gate.
   const pendingRepoRef = useRef<PendingRepo | undefined>(undefined);
 
   const [repoId, setRepoId] = useState<string | null>(() => {
@@ -87,13 +134,20 @@ export function useRepoBoundOperation(
     setRepoName(name);
   }, []);
 
-  const apply = useCallback(
-    async (id: string | null, name: string) => {
+  const applyAt = useCallback(
+    async (seq: number, id: string | null, name: string) => {
+      // Latest-wins gate: skip if a newer binding event already applied. This
+      // makes the two deferred queues (this hook's activeRepoChanged + Push's
+      // pushPanelInit) agree on the last-arrived event regardless of which
+      // drains first. `>` (strict) is correct: an event may never re-apply at
+      // its own seq, and equal seqs only arise for the same event.
+      if (seq <= lastAppliedSeqRef.current) return;
+      lastAppliedSeqRef.current = seq;
       try {
         setRepo(id, name);
         await onFollowRef.current(id);
       } catch (e) {
-        console.error("useRepoBoundOperation apply failed:", e);
+        console.error("useRepoBoundOperation applyAt failed:", e);
       }
     },
     [setRepo],
@@ -115,14 +169,36 @@ export function useRepoBoundOperation(
 
   const bindRepo = useCallback(
     (id: string | null, name: string = "") => {
+      // NOTE: intentionally NOT seq-gated. `bindRepo` is the imperative rebind
+      // the panel calls from its own applyReInit (which is itself seq-gated via
+      // claimSeq before reaching here). Gating it here would double-gate the
+      // Push path and, worse, would silently no-op a direct programmatic
+      // rebind that has no competing event. The seq gate lives at the EVENT
+      // boundary (applyAt / claimSeq), not at the imperative setter.
       setRepo(id, name);
     },
     [setRepo],
   );
 
+  // Allocate the next monotonic seq. Used by Push's pushPanelInit arrival so
+  // its re-init competes on the SAME ordering as this hook's activeRepoChanged.
+  const nextSeq = useCallback(() => ++seqRef.current, []);
+
+  // Claim a seq for application (latest-wins gate). Returns false if a newer
+  // event already applied, in which case the caller MUST skip. Used by Push's
+  // applyReInit so a stale re-init (superseded by a newer activeRepoChanged)
+  // cannot override the newer repo's branch/remote.
+  const claimSeq = useCallback((seq: number) => {
+    if (seq <= lastAppliedSeqRef.current) return false;
+    lastAppliedSeqRef.current = seq;
+    return true;
+  }, []);
+
   // Idle-follow: subscribe to activeRepoChanged once. The event carries the
   // disambiguated `repoName` (host computes it via formatRepoLabel) so the
   // header label updates in lockstep with repoId, not just on panel re-open.
+  // Each arrival stamps a fresh seq so it can win (or lose) the latest-wins
+  // race against Push's pushPanelInit on the shared counter.
   useEffect(() => {
     return bridge.onEvent((event, data) => {
       if (event !== "activeRepoChanged") return;
@@ -132,21 +208,24 @@ export function useRepoBoundOperation(
       };
       const id = payload.repo?.id ?? null;
       const name = payload.repoName ?? "";
+      const seq = ++seqRef.current;
       if (busyRef.current) {
-        pendingRepoRef.current = { id, name };
+        pendingRepoRef.current = { seq, id, name };
       } else {
-        void apply(id, name);
+        void applyAt(seq, id, name);
       }
     });
-  }, [apply]);
+  }, [applyAt]);
 
-  // When busy flips false, apply the latest pending repo (id + name together).
+  // When busy flips false, apply the latest pending repo (seq + id + name
+  // together). Re-runs the latest-wins gate via applyAt so a pending event
+  // whose seq was overtaken by a Push re-init that already applied is skipped.
   useEffect(() => {
     if (busy || pendingRepoRef.current === undefined) return;
-    const { id, name } = pendingRepoRef.current;
+    const { seq, id, name } = pendingRepoRef.current;
     pendingRepoRef.current = undefined;
-    void apply(id, name);
-  }, [busy, apply]);
+    void applyAt(seq, id, name);
+  }, [busy, applyAt]);
 
-  return { repoId, repoName, request, bindRepo };
+  return { repoId, repoName, request, bindRepo, nextSeq, claimSeq };
 }
