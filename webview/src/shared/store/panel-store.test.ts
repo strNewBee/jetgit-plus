@@ -233,6 +233,8 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: "a1",
       selectedCommitHashes: ["a1"],
       lastSelectedCommitHash: "a1",
+      selectedBranches: ["feature-a"],
+      lastSelectedBranch: "feature-a",
       commitFiles: [{ path: "a.ts" } as never],
       selectedFilePath: "a.ts",
       rangeOldest: "a1",
@@ -264,6 +266,8 @@ describe("panel-store resetForRepoSwitch", () => {
     expect(s.selectedCommitHash).toBeNull();
     expect(s.selectedCommitHashes).toEqual([]);
     expect(s.lastSelectedCommitHash).toBeNull();
+    expect(s.selectedBranches).toEqual([]);
+    expect(s.lastSelectedBranch).toBeNull();
     expect(s.commitFiles).toEqual([]);
     expect(s.selectedFilePath).toBeNull();
     // range cleared
@@ -296,6 +300,8 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: "a1",
       selectedCommitHashes: ["a1"],
       lastSelectedCommitHash: "a1",
+      selectedBranches: ["feature-a"],
+      lastSelectedBranch: "feature-a",
       commitFiles: [{ path: "a.ts" } as never],
       selectedFilePath: "a.ts",
       rangeOldest: "a1",
@@ -324,6 +330,8 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: s.selectedCommitHash,
       selectedCommitHashes: s.selectedCommitHashes,
       lastSelectedCommitHash: s.lastSelectedCommitHash,
+      selectedBranches: s.selectedBranches,
+      lastSelectedBranch: s.lastSelectedBranch,
       commitFiles: s.commitFiles,
       selectedFilePath: s.selectedFilePath,
       rangeOldest: s.rangeOldest,
@@ -334,6 +342,24 @@ describe("panel-store resetForRepoSwitch", () => {
     });
 
     expect(pick(afterSwitch)).toEqual(pick(afterNull));
+  });
+
+  it("clears selectedBranches / lastSelectedBranch on repo switch so wrong-repo branch ops are disabled", () => {
+    // Hazard: BranchSidebar/BoundTree gate Update/Delete/Favorite/Navigate on
+    // selectedBranches[0]. If repo-A's selected branch survives the A→B switch and
+    // repo-B happens to have a same-named branch, the op is routed through the
+    // B-bound bridge onto the wrong repo. Resetting both fields closes that window:
+    // after switch, BranchSidebar has no selected branch, so those actions are
+    // DISABLED until the user selects a branch in repo-B.
+    usePanelStore.setState({
+      selectedBranches: ["repo-A-branch"],
+      lastSelectedBranch: "repo-A-branch",
+      branches: [{ name: "repo-A-branch", isCurrent: true } as never],
+    });
+    usePanelStore.getState().resetForRepoSwitch();
+    const s = usePanelStore.getState();
+    expect(s.selectedBranches).toEqual([]);
+    expect(s.lastSelectedBranch).toBeNull();
   });
 
   it("a failed fetchInitialData after reset does NOT resurrect stale repo-A data (F3 fetch-failure guarantee)", async () => {

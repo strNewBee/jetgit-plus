@@ -223,6 +223,8 @@ function _clearRepoBoundDisplay() {
     selectedCommitHash: null,
     selectedCommitHashes: [] as string[],
     lastSelectedCommitHash: null,
+    selectedBranches: [] as string[],
+    lastSelectedBranch: null as string | null,
     commitFiles: [] as DiffFile[],
     selectedFilePath: null,
     rangeOldest: null,
