@@ -92,14 +92,47 @@ export class RepoSelectionCoordinator {
     // reconciler pass chained on the SAME serializer, so there is no
     // interleaving window between select and reconcile.
     return this.serializer.chain(async () => {
+      // Fix-10: transactional select. Capture the PREVIOUS active id BEFORE
+      // setActive mutates the registry, so a persist failure can roll the
+      // registry back to a state the webview is still showing (rather than
+      // leaving the registry on the new repo while the persisted value and the
+      // webview are both still on the old one — a three-way divergence with no
+      // signal to the caller).
+      const previous = this.registry.getActiveId();
       if (!this.registry.setActive(repoId)) {
         // The repo vanished while queued (folder reconciliation removed it).
         // Leave the current active as-is; signal failure to the caller.
+        // (`previous` is unchanged by a failed setActive; nothing to roll back.)
         throw new RepoSelectionError(`Repository not available: ${repoId}`);
       }
       // Persist BEFORE broadcasting so a reload observes the same active repo
-      // the (about-to-be) broadcast claims.
-      await this.persist(this.registry.getActiveId());
+      // the (about-to-be) broadcast claims. Persisting can throw (e.g. a
+      // workspaceState I/O error): in that case roll the registry back to
+      // `previous` and rethrow the RAW persist error (do NOT wrap it in
+      // RepoSelectionError — it is a persistence failure, not a missing-repo;
+      // the `selectRepo` handler distinguishes the two and rethrows non-
+      // RepoSelectionError errors as-is). No broadcast fires on this failure
+      // path: the registry is back to `previous`, which the webview already
+      // reflects, and the failed select's caller re-syncs via `load()` on error.
+      try {
+        await this.persist(this.registry.getActiveId());
+      } catch (err) {
+        // INVARIANT — `previous` is guaranteed non-null on this failure path:
+        // `setActive(repoId)` just returned `true` ⇒ `repoId` is registered ⇒
+        // the registry holds ≥1 repo ⇒ `activeId` was non-null before this
+        // select. In `RepoRegistry`, `activeId` is `null` ONLY when the
+        // registry is empty (set on first `add`, falls back to `order[0]` on
+        // remove, never null-with-repos). The shared `Serializer` mutex
+        // guarantees NO `reconcile` ran between the `previous` capture and this
+        // rollback (select and reconcile share ONE serializer), so `previous`
+        // cannot have been removed mid-flight. The `if (previous !== null)`
+        // guard is defensive belt-and-suspenders (matches the existing
+        // defensive-null-guard style in select).
+        if (previous !== null) {
+          this.registry.setActive(previous);
+        }
+        throw err;
+      }
       // Re-read the active id AFTER the await. The shared mutex guarantees no
       // reconciler mutated the registry during the persist, so in practice this
       // equals the pre-await value — but reading here is the correct
@@ -118,6 +151,45 @@ export class RepoSelectionCoordinator {
       return { activeId, changed: true };
     });
   }
+}
+
+/**
+ * Fix-10: the post-reconcile "persist best-effort, then ALWAYS broadcast the
+ * active repo" step. Persisting the active id is best-effort: if it throws (e.g.
+ * a workspaceState I/O error) we log and STILL broadcast, so the UI stays
+ * consistent with the in-memory registry. A stale persisted value is corrected
+ * on the next reconcile / select / reload. Extracted (rather than an inline
+ * closure in extension.ts) so the always-broadcast-on-persist-failure guarantee
+ * is unit-testable — the host suite is unit-style with injected deps and has no
+ * `activate()`-level harness, so an inline closure could never be exercised.
+ *
+ * This mirrors exactly what `RepoSelectionCoordinator.select` already does for
+ * the descriptor lookup (`this.registry.get(activeId)` → `.descriptor`) and uses
+ * the same `broadcast` callback shape as the coordinator's `broadcastActive`. It
+ * is invoked from the reconciler's `onSettled` tail, which runs UNDER the shared
+ * serializer mutex (inside runPass's finally), so a concurrently-queued `select`
+ * cannot interleave between this persist and broadcast.
+ */
+export async function persistAndBroadcastActive(
+  registry: RepoRegistry,
+  persist: (activeId: string | null) => PromiseLike<void> | void,
+  broadcast: (repo: RepoDescriptor | null) => void,
+): Promise<void> {
+  const activeId = registry.getActiveId();
+  try {
+    await persist(activeId);
+  } catch (err) {
+    // Best-effort persist: log and continue so the broadcast ALWAYS fires.
+    // Without this catch a persist throw would skip the broadcast, leaving the
+    // UI tracking a stale active repo while the in-memory registry moved on.
+    console.error(
+      "[jetgit-plus] persist activeRepoId failed:",
+      err instanceof Error ? (err.stack ?? err) : err,
+    );
+  }
+  const activeRepo =
+    activeId !== null ? (registry.get(activeId)?.descriptor ?? null) : null;
+  broadcast(activeRepo);
 }
 
 /** Raised when a queued selection targets a repo that no longer exists. */

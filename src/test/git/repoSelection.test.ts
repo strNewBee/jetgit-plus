@@ -7,6 +7,7 @@ import {
 } from "../../git/repoRegistry";
 import {
   FolderReconciler,
+  persistAndBroadcastActive,
   RepoSelectionCoordinator,
   RepoSelectionError,
   Serializer,
@@ -109,6 +110,47 @@ describe("RepoSelectionCoordinator (P2#6 selectRepo race)", () => {
     assert.strictEqual(broadcasts[0].repo?.id, "/c");
   });
 
+  it("Fix-10: a select whose persist THROWS rolls the registry back to the previous active and does not broadcast", async () => {
+    // Fix-10 (Important #3): `select` does setActive(B) THEN `await persist(B)`.
+    // If persist throws, the registry was left holding B while the persisted
+    // value is still A and the webview is still showing A — a three-way split
+    // with no rollback + no broadcast + no rethrow surfaced. The fix makes
+    // select transactional: capture the previous active id before setActive,
+    // and on persist failure roll the registry back then rethrow the RAW error.
+    //
+    // NON-VACUOUS: reverting the rollback (so the catch rethrows without
+    // restoring `previous`) leaves `registry.getActiveId()` at "/b" → the
+    // `assert.strictEqual(registry.getActiveId(), "/a")` below FAILS.
+    const { registry, broadcasts } = setup();
+    registry.setActive("/a"); // start on A
+
+    const boom = new Error("workspaceState I/O failed");
+    const coordinator = new RepoSelectionCoordinator(
+      registry,
+      async (activeId) => {
+        if (activeId === "/b") throw boom;
+      },
+      (repo) => broadcasts.push({ repo: repo ? { id: repo.id } : null }),
+      new Serializer(),
+    );
+
+    // select(B) rejects with the RAW persist error (not a RepoSelectionError).
+    await assert.rejects(
+      coordinator.select("/b"),
+      /workspaceState I\/O failed/,
+    );
+    // Registry was ROLLED BACK to the previous active (/a), not left on /b.
+    assert.strictEqual(registry.getActiveId(), "/a");
+    // No broadcast fired for the failed select — the webview is still on /a
+    // (which the registry now agrees with again), and the caller re-syncs via
+    // load() on the error.
+    assert.deepStrictEqual(
+      broadcasts.map((b) => b.repo?.id ?? null),
+      [],
+      "failed select broadcast nothing — registry rolled back, not diverged",
+    );
+  });
+
   it("a stale select whose repo was removed mid-flight fails and does not broadcast", async () => {
     // select B is queued behind a slow select A; while queued, a folder
     // reconciliation removes B. When B's turn comes, setActive fails → reject,
@@ -144,6 +186,63 @@ describe("RepoSelectionCoordinator (P2#6 selectRepo race)", () => {
       ["/a"],
     );
     assert.strictEqual(registry.getActiveId(), "/a");
+  });
+});
+
+describe("Fix-10 persistAndBroadcastActive (post-reconcile always-broadcast on persist failure)", () => {
+  // Fix-10 (Important #3): the reconcile onSettled closure does
+  // `await workspaceState.update(...)` then `broadcastActiveRepoChanged(...)`.
+  // If the persist throws, the broadcast was SKIPPED — the UI stopped tracking
+  // the (correct) in-memory registry after a reconcile. The fix extracts the
+  // body into persistAndBroadcastActive: best-effort persist in try/catch,
+  // ALWAYS broadcast. These two cases pin the guarantee.
+  function registryWith(ids: string[]): RepoRegistry {
+    const registry = new RepoRegistry();
+    registry.build(
+      ids.map((id) => discovered(id)),
+      (p) => new GitService(p),
+    );
+    return registry;
+  }
+
+  it("Case A: a persist that THROWS still broadcasts the active repo (always-broadcast)", async () => {
+    // NON-VACUOUS: reverting the try/catch in persistAndBroadcastActive (so a
+    // throw skips the broadcast) makes `broadcasts` stay `[]` → the
+    // `deepStrictEqual([{ repo: { id: "/a" } }])` below FAILS.
+    const registry = registryWith(["/a"]);
+    const broadcasts: { repo: { id: string } | null }[] = [];
+    const boom = new Error("workspaceState I/O failed");
+
+    await persistAndBroadcastActive(
+      registry,
+      () => {
+        throw boom;
+      },
+      (repo) => broadcasts.push({ repo: repo ? { id: repo.id } : null }),
+    );
+
+    assert.deepStrictEqual(
+      broadcasts,
+      [{ repo: { id: "/a" } }],
+      "persist threw but the active repo was still broadcast",
+    );
+  });
+
+  it("Case B: an EMPTY registry broadcasts null (no crash, null branch guarded)", async () => {
+    const registry = registryWith([]); // empty — getActiveId() === null
+    const broadcasts: { repo: { id: string } | null }[] = [];
+
+    await persistAndBroadcastActive(
+      registry,
+      () => {},
+      (repo) => broadcasts.push({ repo: repo ? { id: repo.id } : null }),
+    );
+
+    assert.deepStrictEqual(
+      broadcasts,
+      [{ repo: null }],
+      "empty registry broadcast null without crashing",
+    );
   });
 });
 

@@ -10,6 +10,7 @@ import {
 } from "./git/repoRegistry";
 import {
   FolderReconciler,
+  persistAndBroadcastActive,
   RepoSelectionCoordinator,
   RepoSelectionError,
   Serializer,
@@ -1922,20 +1923,29 @@ export async function activate(context: vscode.ExtensionContext) {
     // shared serializer was meant to close. Running it under the mutex via
     // onSettled closes that window with no nested chain acquisition (this
     // closure only reads the registry + persists + broadcasts).
+    // Fix-10: delegate to persistAndBroadcastActive so the always-broadcast-on-
+    // persist-failure guarantee is the shared, unit-tested implementation rather
+    // than an inline closure (which the host suite could not exercise). The
+    // mutex guarantee (I1) is unchanged — this whole onSettled closure still
+    // runs under the shared serializer via runPass's finally, so a concurrently-
+    // queued `select` cannot interleave its own persist/broadcast here.
+    //
+    // Re-broadcast the active repo after every reconcile pass. When the active
+    // id CHANGED, this is the authoritative switch broadcast. When it did NOT
+    // change, the broadcast is still needed because the repo set changed — the
+    // active repo's disambiguated label may have shifted (e.g. adding a
+    // same-name repo appends the path suffix). Re-computing the label here
+    // (broadcastActiveRepoChanged → formatRepoLabel) keeps the panel header
+    // correct without a panel re-open. Cheap + idempotent. This broadcast fires
+    // EVEN when the persist threw (persistAndBroadcastActive swallows the error
+    // and broadcasts regardless), so the UI never stops tracking the registry.
     async () => {
-      const activeId = repoRegistry.getActiveId();
-      await context.workspaceState.update("jetgit.activeRepoId", activeId);
-      // Re-broadcast the active repo after every reconcile pass. When the active
-      // id CHANGED, this is the authoritative switch broadcast. When it did NOT
-      // change, the broadcast is still needed because the repo set changed — the
-      // active repo's disambiguated label may have shifted (e.g. adding a
-      // same-name repo appends the path suffix). Re-computing the label here
-      // (broadcastActiveRepoChanged → formatRepoLabel) keeps the panel header
-      // correct without a panel re-open. Cheap + idempotent.
-      const activeRepo = activeId
-        ? (repoRegistry.get(activeId)?.descriptor ?? null)
-        : null;
-      broadcastActiveRepoChanged(activeRepo);
+      await persistAndBroadcastActive(
+        repoRegistry,
+        (activeId) =>
+          context.workspaceState.update("jetgit.activeRepoId", activeId),
+        (repo) => broadcastActiveRepoChanged(repo),
+      );
     },
   );
 
