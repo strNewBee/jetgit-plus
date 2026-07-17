@@ -867,6 +867,180 @@ describe("panel-store async response ordering", () => {
     usePanelStore.setState({ loading: false, hasMore: true });
   });
 
+  it("defaults initial repository loading to the checked-out branch", async () => {
+    const request = vi.mocked(bridge.request);
+    const graphBranches: Array<string | undefined> = [];
+    request.mockImplementation(async (command, params) => {
+      if (command === "getBranches") {
+        return [
+          {
+            name: "main",
+            fullRef: "refs/heads/main",
+            isRemote: false,
+            isCurrent: true,
+          },
+        ];
+      }
+      if (command === "getTags") return [];
+      if (command === "getGraphData") {
+        graphBranches.push((params as { branch?: string }).branch);
+        return graphResult([]);
+      }
+      return null;
+    });
+
+    await usePanelStore
+      .getState()
+      .fetchInitialData({ defaultToCurrentBranch: true });
+
+    expect(graphBranches).toEqual(["refs/heads/main"]);
+    expect(usePanelStore.getState().filter.branch).toBe("refs/heads/main");
+  });
+
+  it("keeps detached HEAD logs unfiltered across later refreshes", async () => {
+    const request = vi.mocked(bridge.request);
+    const graphBranches: Array<string | undefined> = [];
+    request.mockImplementation(async (command, params) => {
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getGraphData") {
+        graphBranches.push((params as { branch?: string }).branch);
+        return graphResult([]);
+      }
+      return null;
+    });
+
+    await usePanelStore
+      .getState()
+      .fetchInitialData({ defaultToCurrentBranch: true });
+    await usePanelStore.getState().refresh();
+
+    expect(graphBranches).toEqual([undefined, undefined]);
+    expect(usePanelStore.getState().filter.branch).toBe("");
+  });
+
+  it("does not restore the default branch during an ordinary refresh after clearing it", async () => {
+    const request = vi.mocked(bridge.request);
+    const graphBranches: Array<string | undefined> = [];
+    request.mockImplementation(async (command, params) => {
+      if (command === "getBranches") {
+        return [
+          {
+            name: "main",
+            fullRef: "refs/heads/main",
+            isRemote: false,
+            isCurrent: true,
+          },
+        ];
+      }
+      if (command === "getTags") return [];
+      if (command === "getGraphData") {
+        graphBranches.push((params as { branch?: string }).branch);
+        return graphResult([]);
+      }
+      return null;
+    });
+
+    await usePanelStore
+      .getState()
+      .fetchInitialData({ defaultToCurrentBranch: true });
+    usePanelStore.setState((state) => ({
+      filter: { ...state.filter, branch: "" },
+    }));
+    await usePanelStore.getState().fetchInitialData();
+
+    expect(graphBranches).toEqual(["refs/heads/main", undefined]);
+    expect(usePanelStore.getState().filter.branch).toBe("");
+  });
+
+  it("preserves pending default-branch initialization when refresh supersedes the first load", async () => {
+    const request = vi.mocked(bridge.request);
+    const firstBranches = deferred<never[]>();
+    const graphBranches: Array<string | undefined> = [];
+    let branchRequests = 0;
+    const currentBranch = {
+      name: "main",
+      fullRef: "refs/heads/main",
+      isRemote: false,
+      isCurrent: true,
+    };
+    request.mockImplementation(async (command, params) => {
+      if (command === "getBranches") {
+        branchRequests += 1;
+        return branchRequests === 1 ? firstBranches.promise : [currentBranch];
+      }
+      if (command === "getTags") return [];
+      if (command === "getGraphData") {
+        graphBranches.push((params as { branch?: string }).branch);
+        return graphResult([]);
+      }
+      return null;
+    });
+
+    const initial = usePanelStore
+      .getState()
+      .fetchInitialData({ defaultToCurrentBranch: true });
+    await vi.waitFor(() => expect(branchRequests).toBe(1));
+    const refresh = usePanelStore.getState().refresh();
+    await refresh;
+    firstBranches.resolve([currentBranch] as never[]);
+    await initial;
+
+    expect(graphBranches).toEqual(["refs/heads/main"]);
+    expect(usePanelStore.getState().filter.branch).toBe("refs/heads/main");
+  });
+
+  it("consumes default initialization once the current branch is known", async () => {
+    const request = vi.mocked(bridge.request);
+    const firstGraph = deferred<ReturnType<typeof graphResult>>();
+    const graphBranches: Array<string | undefined> = [];
+    const currentBranch = {
+      name: "main",
+      fullRef: "refs/heads/main",
+      isRemote: false,
+      isCurrent: true,
+    };
+    request.mockImplementation(async (command, params) => {
+      if (command === "getBranches") return [currentBranch];
+      if (command === "getTags") return [];
+      if (command === "getGraphData") {
+        graphBranches.push((params as { branch?: string }).branch);
+        if (graphBranches.length === 1) return firstGraph.promise;
+        if (graphBranches.length === 3) {
+          return graphResult([commit("feature-tip")]);
+        }
+        return graphResult([]);
+      }
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+
+    const initial = usePanelStore
+      .getState()
+      .fetchInitialData({ defaultToCurrentBranch: true });
+    await vi.waitFor(() => {
+      expect(graphBranches).toEqual(["refs/heads/main"]);
+      expect(usePanelStore.getState().filter.branch).toBe("refs/heads/main");
+    });
+    await usePanelStore.getState().refresh();
+    firstGraph.resolve(graphResult([]));
+    await initial;
+
+    await usePanelStore.getState().navigateToRef(
+      {
+        type: "local",
+        name: "feature",
+        fullRef: "refs/heads/feature",
+      },
+      "feature-tip",
+    );
+
+    expect(graphBranches).toEqual([
+      "refs/heads/main",
+      "refs/heads/main",
+      undefined,
+    ]);
+  });
+
   it("discards an older graph response that resolves after a newer filter", async () => {
     const request = vi.mocked(bridge.request);
     const older = deferred<ReturnType<typeof graphResult>>();

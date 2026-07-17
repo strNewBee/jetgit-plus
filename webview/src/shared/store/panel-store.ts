@@ -20,6 +20,10 @@ interface PanelFilter {
   file: string;
 }
 
+interface FetchInitialDataOptions {
+  defaultToCurrentBranch?: boolean;
+}
+
 interface PanelStore {
   commits: Commit[];
   /** Commits filtered by search/author (client-side). Graph layout uses full `commits`. */
@@ -60,7 +64,7 @@ interface PanelStore {
   hasMore: boolean;
   operationInProgress: boolean;
 
-  fetchInitialData: () => Promise<void>;
+  fetchInitialData: (options?: FetchInitialDataOptions) => Promise<void>;
   loadMore: () => Promise<void>;
   selectCommit: (
     hash: string,
@@ -257,6 +261,10 @@ let logLoadGeneration = 0;
 let selectionGeneration = 0;
 let navigationGeneration = 0;
 let activeLogLoad: Promise<void> | null = null;
+// Repository initialization is an intent, not a property of one request. A
+// watcher refresh may supersede the first request before branches resolve; the
+// replacement request must still initialize the log to the checked-out branch.
+let pendingDefaultBranchInitialization = false;
 
 function invalidateRepoAsyncWork(): void {
   logLoadGeneration += 1;
@@ -305,14 +313,25 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   hasMore: true,
   operationInProgress: false,
 
-  async fetchInitialData() {
+  async fetchInitialData(options = {}) {
     const generation = ++logLoadGeneration;
+    if (options.defaultToCurrentBranch && !get().filter.branch) {
+      pendingDefaultBranchInitialization = true;
+    }
+    const shouldDefaultToCurrentBranch =
+      pendingDefaultBranchInitialization && !get().filter.branch;
     set({ loading: true });
     const start = Date.now();
     const operation = (async () => {
       try {
-        const requestedFilter = get().filter;
-        const [graphResult, branches, tags] = await Promise.all([
+        let requestedFilter = { ...get().filter };
+        const branchesRequest = bridge.request("getBranches") as Promise<
+          BranchInfo[] | null
+        >;
+        const tagsRequest = bridge.request("getTags") as Promise<
+          TagInfo[] | null
+        >;
+        const requestGraph = () =>
           bridge.request("getGraphData", {
             maxCount: 200,
             branch: requestedFilter.branch || undefined,
@@ -320,12 +339,46 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
           }) as Promise<{
             graphData: { commits: Commit[]; lanes: Record<string, LaneInfo> };
             snapshot: LaneSnapshot;
-          } | null>,
-          bridge.request("getBranches") as Promise<BranchInfo[] | null>,
-          bridge.request("getTags") as Promise<TagInfo[] | null>,
-        ]);
+          } | null>;
+
+        let graphResult: Awaited<ReturnType<typeof requestGraph>>;
+        let branches: BranchInfo[] | null;
+        let tags: TagInfo[] | null;
+        if (shouldDefaultToCurrentBranch) {
+          [branches, tags] = await Promise.all([branchesRequest, tagsRequest]);
+          if (generation !== logLoadGeneration) return;
+          const currentRef = branches?.find(
+            (branch) => !branch.isRemote && branch.isCurrent,
+          )?.fullRef;
+          if (currentRef) {
+            requestedFilter = { ...requestedFilter, branch: currentRef };
+            set((state) => ({
+              filter: { ...state.filter, branch: currentRef },
+            }));
+            // The initialization intent is fulfilled once the checked-out ref
+            // is known and reflected in state. Do not retain it while the
+            // graph request is pending: a newer refresh may supersede that
+            // request, and a leaked flag would later override an explicit
+            // filter clear (for example during navigateToRef).
+            pendingDefaultBranchInitialization = false;
+          } else {
+            // Detached HEAD (or a repository without a local branch) has no
+            // branch to initialize. Future ordinary refreshes stay unfiltered.
+            pendingDefaultBranchInitialization = false;
+          }
+          graphResult = await requestGraph();
+        } else {
+          [graphResult, branches, tags] = await Promise.all([
+            requestGraph(),
+            branchesRequest,
+            tagsRequest,
+          ]);
+        }
 
         if (generation !== logLoadGeneration) return;
+        if (shouldDefaultToCurrentBranch) {
+          pendingDefaultBranchInitialization = false;
+        }
 
         const commits = graphResult?.graphData?.commits ?? [];
         const lanes = graphResult?.graphData?.lanes ?? {};
@@ -608,6 +661,11 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   setFilter(partial: Partial<PanelFilter>) {
     navigationGeneration += 1;
+    if (partial.branch !== undefined) {
+      // Any explicit branch choice, including clearing the chip, supersedes
+      // repository initialization and must survive ordinary refreshes.
+      pendingDefaultBranchInitialization = false;
+    }
     const { filter: current, selectedCommitHashes, commits } = get();
     const next = { ...current, ...partial };
 
@@ -888,6 +946,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   resetForRepoSwitch() {
     invalidateRepoAsyncWork();
+    pendingDefaultBranchInitialization = false;
     const { filter } = get();
     // On a repo→repo switch the old repo's display/selection/range/collapse
     // data must be dropped IMMEDIATELY: the new repo's fetch is async, and if
@@ -914,6 +973,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   clearForNoRepo() {
     invalidateRepoAsyncWork();
+    pendingDefaultBranchInitialization = false;
     const { filter } = get();
     // Wipe repo-bound display data + repo-scoped filter fields; keep carryover
     // (search/author/date) since they are not repo-bound and a future repo may

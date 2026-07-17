@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../shared/bridge", () => ({
@@ -11,6 +17,7 @@ vi.mock("../../shared/bridge", () => ({
 }));
 
 const { usePanelStore } = await import("../../shared/store/panel-store");
+const { bridgeWithProgress } = await import("../../shared/bridge");
 const { BranchTree } = await import("./BranchTree");
 
 const originalState = usePanelStore.getState();
@@ -23,10 +30,31 @@ function seedTree(showTags = true) {
         fullRef: "refs/heads/main",
         isRemote: false,
         isCurrent: true,
-        isFavorite: false,
+        isFavorite: true,
         ahead: 0,
         behind: 0,
         lastCommitHash: "branch-tip",
+      },
+      {
+        name: "favorite",
+        fullRef: "refs/heads/favorite",
+        isRemote: false,
+        isCurrent: false,
+        isFavorite: true,
+        upstream: "origin/favorite",
+        ahead: 0,
+        behind: 0,
+        lastCommitHash: "favorite-tip",
+      },
+      {
+        name: "feature/plain",
+        fullRef: "refs/heads/feature/plain",
+        isRemote: false,
+        isCurrent: false,
+        isFavorite: false,
+        ahead: 0,
+        behind: 0,
+        lastCommitHash: "plain-tip",
       },
     ],
     tags: [
@@ -37,6 +65,14 @@ function seedTree(showTags = true) {
         targetCommitHash: "tag-tip",
         isFavorite: true,
         isAnnotated: true,
+      },
+      {
+        name: "v2.0.0",
+        fullRef: "refs/tags/v2.0.0",
+        hash: "tag-v2-object",
+        targetCommitHash: "tag-v2-tip",
+        isFavorite: false,
+        isAnnotated: false,
       },
     ],
     commits: [],
@@ -57,6 +93,7 @@ function seedTree(showTags = true) {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
   usePanelStore.setState({
     ...originalState,
     branches: [],
@@ -89,24 +126,66 @@ describe("BranchTree unified refs", () => {
     expect(setFilter).toHaveBeenCalledWith({ branch: tag.fullRef });
   });
 
-  it("renders favorite stars and toggles a tag favorite", async () => {
+  it("renders one prioritized status icon for current, favorite, and ordinary refs", () => {
     seedTree(true);
-    const setFavorite = vi.fn().mockResolvedValue(undefined);
-    usePanelStore.setState({ setFavorite });
+    const { getByText } = render(<BranchTree />);
+
+    const iconFor = (name: string) => {
+      const row = getByText(name).closest(".selectable-row");
+      if (!row) throw new Error(`missing row for ${name}`);
+      expect(row.querySelectorAll("[data-ref-status-icon]")).toHaveLength(1);
+      expect(
+        within(row).queryByRole("button", { name: /as favorite/i }),
+      ).toBeNull();
+      return within(row).getByRole("img");
+    };
+
+    // Current wins even when main is also a persisted favorite.
+    expect(iconFor("main").getAttribute("aria-label")).toBe("Current branch");
+    expect(iconFor("favorite").getAttribute("aria-label")).toBe(
+      "Favorite branch",
+    );
+    expect(iconFor("feature/plain").getAttribute("aria-label")).toBe("Branch");
+    expect(iconFor("v1.0.0").getAttribute("aria-label")).toBe("Favorite tag");
+    expect(iconFor("v2.0.0").getAttribute("aria-label")).toBe("Tag");
+  });
+
+  it("uses compact fixed heights for ref and directory rows", () => {
+    seedTree(true);
+    usePanelStore.setState({ branchGroupByDirectory: true });
+    const { getByText } = render(<BranchTree />);
+
+    const branchRow = getByText("plain").closest(".selectable-row");
+    expect((branchRow as HTMLElement).style.height).toBe("22px");
+    expect(
+      (getByText("feature").parentElement as HTMLElement).style.height,
+    ).toBe("22px");
+    expect(
+      (getByText("v1.0.0").closest(".selectable-row") as HTMLElement).style
+        .height,
+    ).toBe("22px");
+    expect((getByText("Local") as HTMLElement).style.height).toBe("24px");
+    expect(
+      (getByText("Current Branch: main") as HTMLElement).style.height,
+    ).toBe("24px");
+  });
+
+  it("allows a ref row to be selected from the keyboard", () => {
+    seedTree(true);
+    const selectRef = vi.fn();
+    const setFilter = vi.fn();
+    usePanelStore.setState({ selectRef, setFilter });
     const { getByRole } = render(<BranchTree />);
 
-    fireEvent.click(getByRole("button", { name: "Unmark v1.0.0 as favorite" }));
+    const row = getByRole("treeitem", { name: /main/i });
+    fireEvent.keyDown(row, { key: "Enter" });
 
-    await waitFor(() =>
-      expect(setFavorite).toHaveBeenCalledWith(
-        {
-          type: "tag",
-          name: "v1.0.0",
-          fullRef: "refs/tags/v1.0.0",
-        },
-        false,
-      ),
+    expect(selectRef).toHaveBeenCalledWith(
+      { type: "local", name: "main", fullRef: "refs/heads/main" },
+      "single",
+      expect.any(Array),
     );
+    expect(setFilter).toHaveBeenCalledWith({ branch: "refs/heads/main" });
   });
 
   it("offers Mark/Unmark as Favorite from a tag context menu", async () => {
@@ -130,6 +209,25 @@ describe("BranchTree unified refs", () => {
         },
         false,
       ),
+    );
+  });
+
+  it("disables Update in the branch context menu when upstream is missing", () => {
+    seedTree(true);
+    const { getByText, getByLabelText } = render(<BranchTree />);
+
+    fireEvent.contextMenu(getByText("feature/plain"), {
+      clientX: 20,
+      clientY: 30,
+    });
+    const update = getByLabelText("Update");
+    expect(update.getAttribute("role")).toBe("menuitem");
+    expect(update.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(update);
+
+    expect(bridgeWithProgress).not.toHaveBeenCalledWith(
+      "updateBranch",
+      expect.anything(),
     );
   });
 

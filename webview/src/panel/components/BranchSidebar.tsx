@@ -48,7 +48,7 @@ export function BranchSidebar({
   }, [onNewBranch]);
 
   const handleUpdateSelected = useCallback(async () => {
-    if (!selectedLocalBranch) return;
+    if (!selectedLocalBranch?.upstream) return;
     try {
       await bridgeWithProgress("updateBranch", {
         branchName: selectedLocalBranch.name,
@@ -115,13 +115,24 @@ export function BranchSidebar({
           <IconAdd />
         </button>
       </Tooltip>
-      <Tooltip text="Update Selected">
+      <Tooltip
+        text={
+          selectedLocalBranch && !selectedLocalBranch.upstream
+            ? "No upstream configured"
+            : "Update Selected"
+        }
+      >
         <button
           type="button"
           className="branch-sidebar-btn"
           aria-label="Update Selected"
+          aria-description={
+            selectedLocalBranch && !selectedLocalBranch.upstream
+              ? "No upstream configured"
+              : undefined
+          }
           onClick={handleUpdateSelected}
-          disabled={!selectedLocalBranch}
+          disabled={!selectedLocalBranch?.upstream}
         >
           <IconUpdate />
         </button>

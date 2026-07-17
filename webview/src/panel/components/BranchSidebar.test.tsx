@@ -41,6 +41,7 @@ describe("BranchSidebar ref actions", () => {
           fullRef: "refs/heads/feature",
           isRemote: false,
           isFavorite: false,
+          upstream: "origin/feature",
           lastCommitHash: "tip",
         } as never,
       ],
@@ -54,6 +55,34 @@ describe("BranchSidebar ref actions", () => {
         branchName: "feature",
       }),
     );
+  });
+
+  it("disables Update Selected when the local branch has no upstream", () => {
+    usePanelStore.setState({
+      selectedRefs: [
+        { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      ],
+      branches: [
+        {
+          name: "feature",
+          fullRef: "refs/heads/feature",
+          isRemote: false,
+          isFavorite: false,
+          lastCommitHash: "tip",
+        } as never,
+      ],
+    });
+    const { getByRole } = render(<BranchSidebar />);
+
+    const update = getByRole("button", {
+      name: "Update Selected",
+    }) as HTMLButtonElement;
+    expect(update.disabled).toBe(true);
+    expect(update.getAttribute("aria-description")).toBe(
+      "No upstream configured",
+    );
+    fireEvent.click(update);
+    expect(bridgeWithProgress).not.toHaveBeenCalled();
   });
 
   it("allows tag favorites and navigation but disables branch-only actions", async () => {

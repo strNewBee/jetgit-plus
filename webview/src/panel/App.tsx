@@ -102,7 +102,9 @@ export function PanelApp() {
             // isn't silently scoped to the old repo's branch/path; carryover
             // filters (search/author/date) are preserved by resetForRepoSwitch.
             usePanelStore.getState().resetForRepoSwitch();
-            void usePanelStore.getState().fetchInitialData();
+            void usePanelStore
+              .getState()
+              .fetchInitialData({ defaultToCurrentBranch: true });
           } else {
             // No active repo (all removed / none): clear stale repo-bound data.
             usePanelStore.getState().clearForNoRepo();
@@ -120,7 +122,9 @@ export function PanelApp() {
       if (disposed) return;
       bootstrapping = false;
       lastRepo = useRepoStore.getState().activeRepoId;
-      if (lastRepo) await fetchInitialData();
+      if (lastRepo) {
+        await fetchInitialData({ defaultToCurrentBranch: true });
+      }
     })();
     return () => {
       disposed = true;

@@ -102,6 +102,26 @@ function IconBranch({ style }: { style?: React.CSSProperties }) {
   );
 }
 
+function IconFavorite({ style }: { style?: React.CSSProperties }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      style={{ verticalAlign: "middle", ...style }}
+    >
+      <path
+        d="M8 2.5L9.3 5.7L12.8 6L10 8.4L10.8 12L8 10.2L5.2 12L6 8.4L3.2 6L6.7 5.7L8 2.5Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function IconTag({ style }: { style?: React.CSSProperties }) {
   return (
     <svg
@@ -446,22 +466,26 @@ export function BranchTree({
     setTagContextMenu({ x: event.clientX, y: event.clientY, tag });
   };
 
+  const applySingleRefAction = (ref: GitRefIdentity) => {
+    if (singleClickAction === "filter") {
+      setFilter({ branch: filter.branch === ref.fullRef ? "" : ref.fullRef });
+      return;
+    }
+    const branch = branches.find(
+      (candidate) => refKey(branchIdentity(candidate)) === refKey(ref),
+    );
+    const tag = tags.find(
+      (candidate) => refKey(tagIdentity(candidate)) === refKey(ref),
+    );
+    const targetHash = branch?.lastCommitHash ?? tag?.targetCommitHash;
+    if (targetHash) void navigateToRef(ref, targetHash);
+  };
+
   const handleSelectionClick = useModifierClickSelection<GitRefIdentity>(
     (ref, mode) => {
       selectRef(ref, mode, allVisibleRefs);
       if (mode !== "single") return;
-      if (singleClickAction === "filter") {
-        setFilter({ branch: filter.branch === ref.fullRef ? "" : ref.fullRef });
-        return;
-      }
-      const branch = branches.find(
-        (candidate) => refKey(branchIdentity(candidate)) === refKey(ref),
-      );
-      const tag = tags.find(
-        (candidate) => refKey(tagIdentity(candidate)) === refKey(ref),
-      );
-      const targetHash = branch?.lastCommitHash ?? tag?.targetCommitHash;
-      if (targetHash) void navigateToRef(ref, targetHash);
+      applySingleRefAction(ref);
     },
     () => setCurrentBranchRowSelected(false),
   );
@@ -473,6 +497,12 @@ export function BranchTree({
 
   const handleRefDoubleClick = (_ref: GitRefIdentity) => {
     setCurrentBranchRowSelected(false);
+  };
+
+  const handleRefKeyboardActivate = (ref: GitRefIdentity) => {
+    setCurrentBranchRowSelected(false);
+    selectRef(ref, "single", allVisibleRefs);
+    applySingleRefAction(ref);
   };
 
   const handleFavorite = useCallback(
@@ -623,9 +653,13 @@ export function BranchTree({
               }
             }}
             style={{
-              padding: "4px 8px 4px 20px",
+              height: 24,
+              padding: "0 8px 0 20px",
+              boxSizing: "border-box",
               cursor: "pointer",
               fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
               background: currentBranchRowSelected
                 ? "var(--selected-bg)"
                 : "transparent",
@@ -654,8 +688,8 @@ export function BranchTree({
               selectedRefKeys={new Set(selectedRefs.map(refKey))}
               filteredBranch={filter.branch}
               onRefClick={handleRefClick}
+              onRefKeyboardActivate={handleRefKeyboardActivate}
               onRefDoubleClick={handleRefDoubleClick}
-              onFavorite={handleFavorite}
               onBranchContextMenu={handleContextMenu}
               collapsed={collapsed}
               onToggle={toggle}
@@ -679,8 +713,8 @@ export function BranchTree({
               selectedRefKeys={new Set(selectedRefs.map(refKey))}
               filteredBranch={filter.branch}
               onRefClick={handleRefClick}
+              onRefKeyboardActivate={handleRefKeyboardActivate}
               onRefDoubleClick={handleRefDoubleClick}
-              onFavorite={handleFavorite}
               onBranchContextMenu={handleContextMenu}
               collapsed={collapsed}
               onToggle={toggle}
@@ -704,8 +738,8 @@ export function BranchTree({
                 selectedRefKeys={new Set(selectedRefs.map(refKey))}
                 filteredBranch={filter.branch}
                 onRefClick={handleRefClick}
+                onRefKeyboardActivate={handleRefKeyboardActivate}
                 onRefDoubleClick={handleRefDoubleClick}
-                onFavorite={handleFavorite}
                 onTagContextMenu={handleTagContextMenu}
                 collapsed={collapsed}
                 onToggle={toggle}
@@ -819,8 +853,8 @@ function TreeNodeView({
   selectedRefKeys,
   filteredBranch,
   onRefClick,
+  onRefKeyboardActivate,
   onRefDoubleClick,
-  onFavorite,
   onBranchContextMenu,
   collapsed,
   onToggle,
@@ -832,8 +866,8 @@ function TreeNodeView({
   selectedRefKeys: Set<string>;
   filteredBranch: string;
   onRefClick: (e: React.MouseEvent, ref: GitRefIdentity) => void;
+  onRefKeyboardActivate: (ref: GitRefIdentity) => void;
   onRefDoubleClick: (ref: GitRefIdentity) => void;
-  onFavorite: (ref: GitRefIdentity, favorite: boolean) => void;
   onBranchContextMenu: (e: React.MouseEvent, branch: BranchInfo) => void;
   collapsed: Record<string, boolean>;
   onToggle: (key: string) => void;
@@ -849,6 +883,8 @@ function TreeNodeView({
         icon={
           isCurrent ? (
             <IconTag style={{ color: "#d4a017" }} />
+          ) : branch.isFavorite ? (
+            <IconFavorite style={{ color: "#d4a017" }} />
           ) : (
             <IconBranch
               style={{
@@ -857,14 +893,20 @@ function TreeNodeView({
             />
           )
         }
+        iconLabel={
+          isCurrent
+            ? "Current branch"
+            : branch.isFavorite
+              ? "Favorite branch"
+              : "Branch"
+        }
         name={node.name}
         isCurrent={isCurrent}
         isSelected={selectedRefKeys.has(refKey(ref))}
         isFiltered={filteredBranch === branch.fullRef}
-        isFavorite={branch.isFavorite}
         onClick={(e) => onRefClick(e, ref)}
+        onKeyboardActivate={() => onRefKeyboardActivate(ref)}
         onDoubleClick={() => onRefDoubleClick(ref)}
-        onFavorite={() => onFavorite(ref, !branch.isFavorite)}
         onContextMenu={(e) => onBranchContextMenu(e, branch)}
         depth={depth}
         ahead={branch.ahead}
@@ -881,7 +923,9 @@ function TreeNodeView({
       <div
         onClick={() => onToggle(collapseKey)}
         style={{
-          padding: `4px 8px 4px ${20 + depth * 12}px`,
+          height: 22,
+          padding: `0 8px 0 ${20 + depth * 12}px`,
+          boxSizing: "border-box",
           cursor: "pointer",
           userSelect: "none",
           opacity: 0.8,
@@ -905,8 +949,8 @@ function TreeNodeView({
             selectedRefKeys={selectedRefKeys}
             filteredBranch={filteredBranch}
             onRefClick={onRefClick}
+            onRefKeyboardActivate={onRefKeyboardActivate}
             onRefDoubleClick={onRefDoubleClick}
-            onFavorite={onFavorite}
             onBranchContextMenu={onBranchContextMenu}
             collapsed={collapsed}
             onToggle={onToggle}
@@ -927,8 +971,8 @@ function TagTreeNodeView({
   selectedRefKeys,
   filteredBranch,
   onRefClick,
+  onRefKeyboardActivate,
   onRefDoubleClick,
-  onFavorite,
   onTagContextMenu,
   collapsed,
   onToggle,
@@ -939,8 +983,8 @@ function TagTreeNodeView({
   selectedRefKeys: Set<string>;
   filteredBranch: string;
   onRefClick: (e: React.MouseEvent, ref: GitRefIdentity) => void;
+  onRefKeyboardActivate: (ref: GitRefIdentity) => void;
   onRefDoubleClick: (ref: GitRefIdentity) => void;
-  onFavorite: (ref: GitRefIdentity, favorite: boolean) => void;
   onTagContextMenu: (event: React.MouseEvent, tag: TagInfo) => void;
   collapsed: Record<string, boolean>;
   onToggle: (key: string) => void;
@@ -952,16 +996,22 @@ function TagTreeNodeView({
     const ref = tagIdentity(tag);
     return (
       <BranchItem
-        icon={<IconTagOutline style={{ color: "var(--description-fg)" }} />}
+        icon={
+          tag.isFavorite ? (
+            <IconFavorite style={{ color: "#d4a017" }} />
+          ) : (
+            <IconTagOutline style={{ color: "var(--description-fg)" }} />
+          )
+        }
+        iconLabel={tag.isFavorite ? "Favorite tag" : "Tag"}
         name={node.name}
         isCurrent={false}
         isSelected={selectedRefKeys.has(refKey(ref))}
         isFiltered={filteredBranch === ref.fullRef}
-        isFavorite={tag.isFavorite}
         onClick={(event) => onRefClick(event, ref)}
+        onKeyboardActivate={() => onRefKeyboardActivate(ref)}
         onDoubleClick={() => onRefDoubleClick(ref)}
         onContextMenu={(event) => onTagContextMenu(event, tag)}
-        onFavorite={() => onFavorite(ref, !tag.isFavorite)}
         depth={depth}
       />
     );
@@ -974,7 +1024,9 @@ function TagTreeNodeView({
       <div
         onClick={() => onToggle(collapseKey)}
         style={{
-          padding: `4px 8px 4px ${20 + depth * 12}px`,
+          height: 22,
+          padding: `0 8px 0 ${20 + depth * 12}px`,
+          boxSizing: "border-box",
           cursor: "pointer",
           userSelect: "none",
           opacity: 0.8,
@@ -997,8 +1049,8 @@ function TagTreeNodeView({
             selectedRefKeys={selectedRefKeys}
             filteredBranch={filteredBranch}
             onRefClick={onRefClick}
+            onRefKeyboardActivate={onRefKeyboardActivate}
             onRefDoubleClick={onRefDoubleClick}
-            onFavorite={onFavorite}
             onTagContextMenu={onTagContextMenu}
             collapsed={collapsed}
             onToggle={onToggle}
@@ -1077,7 +1129,9 @@ function GroupSection({
       <div
         onClick={onToggle}
         style={{
-          padding: "4px 8px",
+          height: 24,
+          padding: "0 8px",
+          boxSizing: "border-box",
           cursor: "pointer",
           userSelect: "none",
           opacity: 0.8,
@@ -1096,41 +1150,53 @@ function GroupSection({
 
 function BranchItem({
   icon,
+  iconLabel,
   name,
   isCurrent,
   isSelected,
   isFiltered,
-  isFavorite,
   onClick,
+  onKeyboardActivate,
   onDoubleClick,
   onContextMenu,
-  onFavorite,
   depth,
   ahead = 0,
   behind = 0,
 }: {
   icon: React.ReactNode;
+  iconLabel: string;
   name: string;
   isCurrent: boolean;
   isSelected: boolean;
   isFiltered: boolean;
-  isFavorite: boolean;
   onClick: (e: React.MouseEvent) => void;
+  onKeyboardActivate: () => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
-  onFavorite: () => void;
   depth: number;
   ahead?: number;
   behind?: number;
 }) {
   return (
     <div
+      role="treeitem"
+      tabIndex={0}
+      aria-label={name}
+      aria-selected={isSelected}
       className={`selectable-row${isSelected ? " selected" : ""}`}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onKeyboardActivate();
+        }
+      }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={{
-        padding: `4px 8px 4px ${20 + depth * 12 + 16}px`,
+        height: 22,
+        padding: `0 8px 0 ${20 + depth * 12 + 16}px`,
+        boxSizing: "border-box",
         fontWeight: isCurrent || isFiltered ? 600 : 400,
         background:
           isCurrent && !isSelected
@@ -1143,29 +1209,20 @@ function BranchItem({
         gap: 4,
       }}
     >
-      <span style={{ flexShrink: 0 }}>{icon}</span>
-      <button
-        type="button"
-        aria-label={`${isFavorite ? "Unmark" : "Mark"} ${name} as favorite`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onFavorite();
-        }}
+      <span
+        role="img"
+        aria-label={iconLabel}
+        data-ref-status-icon
         style={{
-          border: 0,
-          padding: 0,
-          background: "transparent",
-          color: isFavorite
-            ? "var(--vscode-symbolIcon-colorForeground, #d4a017)"
-            : "var(--description-fg)",
-          opacity: isFavorite ? 1 : 0.45,
-          cursor: "pointer",
-          lineHeight: 1,
+          display: "inline-flex",
+          width: 14,
+          alignItems: "center",
+          justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        {isFavorite ? "★" : "☆"}
-      </button>
+        {icon}
+      </span>
       <Tooltip text={name}>
         <span
           style={{
@@ -1401,6 +1458,7 @@ function BranchContextMenu({
   };
 
   const handleUpdate = async () => {
+    if (!branch.upstream) return;
     onClose();
     try {
       await bridgeWithProgress("updateBranch", { branchName: branch.name });
@@ -1517,7 +1575,11 @@ function BranchContextMenu({
 
   if (!branch.isRemote) {
     items.push({ label: "", action: () => {}, separator: true });
-    items.push({ label: "Update", action: handleUpdate });
+    items.push({
+      label: "Update",
+      action: handleUpdate,
+      disabled: !branch.upstream,
+    });
     items.push({ label: "Push...", action: handlePush });
   }
 
@@ -1526,6 +1588,8 @@ function BranchContextMenu({
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label={`Actions for ${branch.name}`}
       style={{
         position: "fixed",
         top: position ? position.top : -9999,
@@ -1555,7 +1619,24 @@ function BranchContextMenu({
         ) : (
           <div
             key={item.label}
+            role="menuitem"
+            tabIndex={0}
+            aria-label={item.label}
+            aria-disabled={item.disabled || undefined}
+            aria-description={
+              item.disabled ? "No upstream configured" : undefined
+            }
+            title={item.disabled ? "No upstream configured" : undefined}
             onClick={item.disabled ? undefined : item.action}
+            onKeyDown={(event) => {
+              if (
+                !item.disabled &&
+                (event.key === "Enter" || event.key === " ")
+              ) {
+                event.preventDefault();
+                item.action();
+              }
+            }}
             style={{
               padding: "6px 16px",
               cursor: item.disabled ? "default" : "pointer",
