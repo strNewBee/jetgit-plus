@@ -644,6 +644,7 @@ export function BranchTree({
         {/* HEAD – unified "Current Branch" entry */}
         {(headBranch || headCommit) && (
           <div
+            title={`Current Branch: ${headBranch?.name ?? "detached"}`}
             onClick={() => {
               setCurrentBranchRowSelected(true);
             }}
@@ -660,6 +661,10 @@ export function BranchTree({
               fontWeight: 600,
               display: "flex",
               alignItems: "center",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
               background: currentBranchRowSelected
                 ? "var(--selected-bg)"
                 : "transparent",

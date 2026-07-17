@@ -170,6 +170,35 @@ describe("BranchTree unified refs", () => {
     ).toBe("24px");
   });
 
+  it("keeps a long current branch label inside its fixed-height row", () => {
+    seedTree(true);
+    const longBranch = "feat/0.5.1-branch-ux-reliability";
+    usePanelStore.setState({
+      branches: [
+        {
+          name: longBranch,
+          fullRef: `refs/heads/${longBranch}`,
+          isRemote: false,
+          isCurrent: true,
+          isFavorite: false,
+          ahead: 0,
+          behind: 0,
+          lastCommitHash: "branch-tip",
+        },
+      ],
+      currentBranch: longBranch,
+    });
+    const label = `Current Branch: ${longBranch}`;
+    const { getByText } = render(<BranchTree />);
+
+    const row = getByText(label) as HTMLElement;
+    expect(row.style.height).toBe("24px");
+    expect(row.style.whiteSpace).toBe("nowrap");
+    expect(row.style.overflow).toBe("hidden");
+    expect(row.style.textOverflow).toBe("ellipsis");
+    expect(row.title).toBe(label);
+  });
+
   it("allows a ref row to be selected from the keyboard", () => {
     seedTree(true);
     const selectRef = vi.fn();
