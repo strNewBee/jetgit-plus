@@ -29,6 +29,13 @@ export class PushPanel {
   }
 
   open(repoId: string, branchName: string, remoteName = "origin"): void {
+    // Preparing the push data is asynchronous. The user can switch the global
+    // active repo while getCurrentBranch/getDefaultRemote is in flight, so a
+    // late continuation must not reveal or rebind this idle panel to the old
+    // repo. Keep the request's Git reads bound to their captured repo, but only
+    // expose the panel when that repo is still globally active.
+    if (this.repoRegistry.getActiveId() !== repoId) return;
+
     const repoName = this.repoLabelFor(repoId);
     if (this.panel) {
       this.panel.reveal();

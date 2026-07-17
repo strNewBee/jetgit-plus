@@ -1,6 +1,7 @@
 import * as assert from "node:assert";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as ts from "typescript";
 
 /**
  * Fix-6 (finding F7): structural URI guard.
@@ -28,9 +29,10 @@ import * as path from "node:path";
  *   bare arg with no `:/`, so they are correctly NOT matched.
  * - Comments/docstrings that mention the literal `jetgit-plus:/` do not use the
  *   `${JETGIT_PLUS_SCHEME}:/` template marker, so they are also excluded.
- * - If a future content URI is built via `Uri.from`/`Uri.parse`-components
- *   instead of this template form, extend URI_MARKER so the guard still covers
- *   100% of real constructions.
+ * - A separate TypeScript-AST pass below catches direct `Uri.parse` and
+ *   `Uri.from` calls that reference the JetGit scheme and requires them to live
+ *   in gitUri.ts. If a future implementation uses another URI-construction
+ *   API, extend collectDirectUriConstructions so this remains exhaustive.
  */
 
 /**
@@ -76,6 +78,61 @@ function collectUriLines(): { file: string; line: string }[] {
   return out;
 }
 
+interface DirectUriConstruction {
+  file: string;
+  line: number;
+  source: string;
+}
+
+/**
+ * Find direct vscode.Uri.parse/Uri.from constructions whose arguments mention
+ * the JetGit content scheme. Unlike URI_MARKER, this also catches component
+ * construction such as `vscode.Uri.from({ scheme: JETGIT_PLUS_SCHEME, ... })`.
+ */
+function collectDirectUriConstructions(): DirectUriConstruction[] {
+  const out: DirectUriConstruction[] = [];
+  for (const rel of listHostTsFiles()) {
+    const source = fs.readFileSync(path.join(process.cwd(), rel), "utf8");
+    const sourceFile = ts.createSourceFile(
+      rel,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        (node.expression.name.text === "parse" ||
+          node.expression.name.text === "from") &&
+        /(?:^|\.)Uri$/.test(node.expression.expression.getText(sourceFile))
+      ) {
+        const args = node.arguments
+          .map((argument) => argument.getText(sourceFile))
+          .join(", ");
+        if (
+          args.includes("JETGIT_PLUS_SCHEME") ||
+          args.includes("jetgit-plus:")
+        ) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(
+            node.getStart(sourceFile),
+          );
+          out.push({
+            file: rel,
+            line: line + 1,
+            source: node.getText(sourceFile),
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return out;
+}
+
 describe("Fix-6 URI audit — every jetgit-plus:/ URI carries repo=", () => {
   it("the host sources actually construct jetgit-plus:/ URIs (guard is non-vacuous)", () => {
     const uriLines = collectUriLines();
@@ -98,6 +155,25 @@ describe("Fix-6 URI audit — every jetgit-plus:/ URI carries repo=", () => {
       "Found jetgit-plus:/ URI(s) without `repo=` — these resolve against the " +
         "active repo and break after a multi-repo switch:\n" +
         offenders.map((o) => `  ${o.file}: ${o.line.trim()}`).join("\n"),
+    );
+  });
+
+  it("centralizes every direct JetGit content URI construction in gitUri.ts", () => {
+    const builderFile = path.normalize("src/views/gitUri.ts");
+    const offenders = collectDirectUriConstructions().filter(
+      (entry) => path.normalize(entry.file) !== builderFile,
+    );
+    assert.strictEqual(
+      offenders.length,
+      0,
+      "Construct JetGit content URIs through buildGitContentUri instead of " +
+        "calling Uri.parse/Uri.from directly:\n" +
+        offenders
+          .map(
+            (entry) =>
+              `  ${entry.file}:${entry.line}: ${entry.source.replace(/\s+/g, " ")}`,
+          )
+          .join("\n"),
     );
   });
 

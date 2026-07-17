@@ -1543,11 +1543,15 @@ export async function activate(context: vscode.ExtensionContext) {
       );
 
       // Create virtual documents for both sides and show diff
-      const baseUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=base&repo=${encodeURIComponent(ctx.repoId)}`,
+      const baseUri = buildGitContentUri(
+        "base",
+        `shelved/${shelfName}/${filePath}`,
+        ctx.repoId,
       );
-      const modifiedUri = vscode.Uri.parse(
-        `${JETGIT_PLUS_SCHEME}:/shelved/${shelfName}/${filePath}?ref=modified&repo=${encodeURIComponent(ctx.repoId)}`,
+      const modifiedUri = buildGitContentUri(
+        "modified",
+        `shelved/${shelfName}/${filePath}`,
+        ctx.repoId,
       );
 
       // Register temporary content for these URIs
