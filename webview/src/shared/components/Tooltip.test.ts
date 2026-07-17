@@ -29,6 +29,20 @@ describe("computeTooltipPosition", () => {
     ).toBe("bottom");
   });
 
+  it("uses the roomier side and clamps inside the viewport when neither side fits", () => {
+    const result = computeTooltipPosition({
+      trigger: { top: 80, bottom: 100, left: 140, width: 20 },
+      tooltip: { width: 120, height: 100 },
+      viewport: { width: 300, height: 140 },
+      preferred: "bottom",
+    });
+
+    expect(result.position).toBe("top");
+    // A top tooltip is translated upward by its own height. Clamping its
+    // anchor to 104 therefore leaves the rendered top edge at the 4px margin.
+    expect(result.top).toBe(104);
+  });
+
   it("detects text clipped by its parent even when the child itself does not overflow", () => {
     const parent = document.createElement("span");
     const wrapper = document.createElement("span");

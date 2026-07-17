@@ -12,6 +12,8 @@
   font-size: 12px;
   box-sizing: border-box;
   max-width: min(480px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   white-space: normal;
   overflow-wrap: anywhere;
   z-index: 99999;

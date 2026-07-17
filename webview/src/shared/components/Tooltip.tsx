@@ -41,6 +41,11 @@ export function computeTooltipPosition({
   let position = preferred;
   if (preferred === "top" && !fitsAbove && fitsBelow) position = "bottom";
   if (preferred === "bottom" && !fitsBelow && fitsAbove) position = "top";
+  if (!fitsAbove && !fitsBelow) {
+    const roomAbove = trigger.top - gap - margin;
+    const roomBelow = viewport.height - margin - trigger.bottom - gap;
+    position = roomAbove >= roomBelow ? "top" : "bottom";
+  }
 
   const halfWidth = tooltip.width / 2;
   const minCenter = margin + halfWidth;
@@ -51,8 +56,25 @@ export function computeTooltipPosition({
       ? viewport.width / 2
       : Math.min(maxCenter, Math.max(minCenter, desiredCenter));
 
+  const renderedHeight = Math.min(
+    tooltip.height,
+    Math.max(0, viewport.height - margin * 2),
+  );
+  const desiredTop =
+    position === "top" ? trigger.top - gap : trigger.bottom + gap;
+  const top =
+    position === "top"
+      ? Math.min(
+          viewport.height - margin,
+          Math.max(margin + renderedHeight, desiredTop),
+        )
+      : Math.min(
+          viewport.height - margin - renderedHeight,
+          Math.max(margin, desiredTop),
+        );
+
   return {
-    top: position === "top" ? trigger.top - gap : trigger.bottom + gap,
+    top,
     left,
     position,
   };

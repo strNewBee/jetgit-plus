@@ -66,6 +66,7 @@ interface PanelStore {
     hash: string,
     mode?: SelectionMode,
     allVisibleCommits?: string[],
+    source?: "user" | "navigation",
   ) => Promise<void>;
   selectFile: (filePath: string) => void;
   openDiffEditor: (commitHash: string, file: DiffFile) => Promise<void>;
@@ -248,6 +249,22 @@ function _clearRepoBoundDisplay() {
   };
 }
 
+// Async log requests may overlap when the user changes filters, switches repos,
+// or clicks a ref while a refresh is in flight. Generations make every result
+// conditional on still belonging to the latest intent instead of allowing a
+// slow response to overwrite newer state.
+let logLoadGeneration = 0;
+let selectionGeneration = 0;
+let navigationGeneration = 0;
+let activeLogLoad: Promise<void> | null = null;
+
+function invalidateRepoAsyncWork(): void {
+  logLoadGeneration += 1;
+  selectionGeneration += 1;
+  navigationGeneration += 1;
+  activeLogLoad = null;
+}
+
 export const usePanelStore = create<PanelStore>((set, get) => ({
   commits: [],
   visibleCommits: [],
@@ -289,145 +306,194 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   operationInProgress: false,
 
   async fetchInitialData() {
+    const generation = ++logLoadGeneration;
     set({ loading: true });
     const start = Date.now();
-    try {
-      const { filter } = get();
-      const [graphResult, branches, tags] = await Promise.all([
-        bridge.request("getGraphData", {
-          maxCount: 200,
-          branch: filter.branch || undefined,
-          file: filter.file || undefined,
-        }) as Promise<{
-          graphData: { commits: Commit[]; lanes: Record<string, LaneInfo> };
-          snapshot: LaneSnapshot;
-        } | null>,
-        bridge.request("getBranches") as Promise<BranchInfo[] | null>,
-        bridge.request("getTags") as Promise<TagInfo[] | null>,
-      ]);
+    const operation = (async () => {
+      try {
+        const requestedFilter = get().filter;
+        const [graphResult, branches, tags] = await Promise.all([
+          bridge.request("getGraphData", {
+            maxCount: 200,
+            branch: requestedFilter.branch || undefined,
+            file: requestedFilter.file || undefined,
+          }) as Promise<{
+            graphData: { commits: Commit[]; lanes: Record<string, LaneInfo> };
+            snapshot: LaneSnapshot;
+          } | null>,
+          bridge.request("getBranches") as Promise<BranchInfo[] | null>,
+          bridge.request("getTags") as Promise<TagInfo[] | null>,
+        ]);
 
-      const commits = graphResult?.graphData?.commits ?? [];
-      const lanes = graphResult?.graphData?.lanes ?? {};
-      const snapshot = graphResult?.snapshot ?? null;
-      const branchList = branches ?? [];
-      const tagList = tags ?? [];
-      const current = branchList.find((b) => b.isCurrent)?.name ?? "";
+        if (generation !== logLoadGeneration) return;
 
-      const { pendingSelectionFromFilter, collapsedIntermediates } = get();
+        const commits = graphResult?.graphData?.commits ?? [];
+        const lanes = graphResult?.graphData?.lanes ?? {};
+        const snapshot = graphResult?.snapshot ?? null;
+        const branchList = branches ?? [];
+        const tagList = tags ?? [];
+        const current = branchList.find((b) => b.isCurrent)?.name ?? "";
 
-      const visible = filterCommits(commits, filter, collapsedIntermediates);
+        const { filter, pendingSelectionFromFilter, collapsedIntermediates } =
+          get();
+        const visible = filterCommits(commits, filter, collapsedIntermediates);
 
-      // Check if we need to restore selection from a cleared filter
-      if (pendingSelectionFromFilter.length > 0) {
-        const validHashes = pendingSelectionFromFilter.filter((h) =>
-          commits.some((c) => c.hash === h),
-        );
-        if (validHashes.length > 0) {
-          set({
-            commits,
-            visibleCommits: visible,
-            graphLayout: lanes,
-            laneSnapshot: snapshot,
-            branches: branchList,
-            tags: tagList,
-            currentBranch: current,
+        // Check if we need to restore selection from a cleared filter.
+        if (pendingSelectionFromFilter.length > 0) {
+          const validHashes = pendingSelectionFromFilter.filter((h) =>
+            commits.some((c) => c.hash === h),
+          );
+          if (validHashes.length > 0) {
+            const fileGeneration = ++selectionGeneration;
+            set({
+              commits,
+              visibleCommits: visible,
+              graphLayout: lanes,
+              laneSnapshot: snapshot,
+              branches: branchList,
+              tags: tagList,
+              currentBranch: current,
 
-            hasMore: commits.length >= 200,
-            selectedCommitHash: validHashes[0],
-            selectedCommitHashes: validHashes,
-            lastSelectedCommitHash: validHashes[0],
-            commitFiles: [],
-            selectedFilePath: null,
-            rangeOldest: validHashes[validHashes.length - 1],
-            rangeNewest: validHashes[0],
-            pendingSelectionFromFilter: [],
-          });
+              hasMore: commits.length >= 200,
+              selectedCommitHash: validHashes[0],
+              selectedCommitHashes: validHashes,
+              lastSelectedCommitHash: validHashes[0],
+              commitFiles: [],
+              selectedFilePath: null,
+              rangeOldest: validHashes[validHashes.length - 1],
+              rangeNewest: validHashes[0],
+              pendingSelectionFromFilter: [],
+            });
 
-          const files = (await bridge.request("getCommitRangeFiles", {
-            hashes: validHashes,
-          })) as DiffFile[] | null;
-          set({ commitFiles: files ?? [] });
-          return;
+            const files = (await bridge.request("getCommitRangeFiles", {
+              hashes: validHashes,
+            })) as DiffFile[] | null;
+            if (
+              generation === logLoadGeneration &&
+              fileGeneration === selectionGeneration
+            ) {
+              set({ commitFiles: files ?? [] });
+            }
+            return;
+          }
         }
+
+        const firstVisible = visible[0];
+        const fileGeneration = ++selectionGeneration;
+        set({
+          commits,
+          visibleCommits: visible,
+          graphLayout: lanes,
+          laneSnapshot: snapshot,
+          branches: branchList,
+          tags: tagList,
+          currentBranch: current,
+
+          hasMore: commits.length >= 200,
+          selectedCommitHash: firstVisible?.hash ?? null,
+          selectedCommitHashes: firstVisible ? [firstVisible.hash] : [],
+          lastSelectedCommitHash: firstVisible?.hash ?? null,
+          commitFiles: [],
+          selectedFilePath: null,
+          rangeOldest: null,
+          rangeNewest: null,
+          pendingSelectionFromFilter: [],
+        });
+
+        // Auto-select first visible commit.
+        if (firstVisible) {
+          const hash = firstVisible.hash;
+          const files = (await bridge.request("getCommitRangeFiles", {
+            hashes: [hash],
+          })) as DiffFile[] | null;
+          if (
+            generation === logLoadGeneration &&
+            fileGeneration === selectionGeneration
+          ) {
+            set({
+              commitFiles: files ?? [],
+              rangeOldest: hash,
+              rangeNewest: hash,
+            });
+          }
+        }
+      } catch (err) {
+        if (generation === logLoadGeneration) {
+          console.error("fetchInitialData failed:", err);
+        }
+      } finally {
+        const elapsed = Date.now() - start;
+        if (elapsed < 1000) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 - elapsed));
+        }
+        if (generation === logLoadGeneration) set({ loading: false });
       }
+    })();
 
-      const firstVisible = visible[0];
-      set({
-        commits,
-        visibleCommits: visible,
-        graphLayout: lanes,
-        laneSnapshot: snapshot,
-        branches: branchList,
-        tags: tagList,
-        currentBranch: current,
-
-        hasMore: commits.length >= 200,
-        selectedCommitHash: firstVisible?.hash ?? null,
-        selectedCommitHashes: firstVisible ? [firstVisible.hash] : [],
-        lastSelectedCommitHash: firstVisible?.hash ?? null,
-        commitFiles: [],
-        selectedFilePath: null,
-        rangeOldest: null,
-        rangeNewest: null,
-        pendingSelectionFromFilter: [],
-      });
-
-      // Auto-select first visible commit
-      if (firstVisible) {
-        const hash = firstVisible.hash;
-        const files = (await bridge.request("getCommitRangeFiles", {
-          hashes: [hash],
-        })) as DiffFile[] | null;
-        set({ commitFiles: files ?? [], rangeOldest: hash, rangeNewest: hash });
-      }
-    } catch (err) {
-      console.error("fetchInitialData failed:", err);
+    activeLogLoad = operation;
+    try {
+      await operation;
     } finally {
-      const elapsed = Date.now() - start;
-      if (elapsed < 1000) {
-        await new Promise((r) => setTimeout(r, 1000 - elapsed));
-      }
-      set({ loading: false });
+      if (activeLogLoad === operation) activeLogLoad = null;
     }
   },
 
   async loadMore() {
-    const { commits, laneSnapshot, hasMore, loading, filter } = get();
-    if (!hasMore || loading) return;
+    if (activeLogLoad) {
+      await activeLogLoad;
+      return;
+    }
 
+    const { commits, laneSnapshot, hasMore, filter } = get();
+    if (!hasMore) return;
+
+    const generation = logLoadGeneration;
     set({ loading: true });
-    try {
-      const result = (await bridge.request("loadMoreLog", {
-        skip: commits.length,
-        count: 200,
-        snapshot: laneSnapshot,
-        branch: filter.branch || undefined,
-      })) as {
-        graphData: { commits: Commit[]; lanes: Record<string, LaneInfo> };
-        snapshot: LaneSnapshot;
-      } | null;
+    const operation = (async () => {
+      try {
+        const result = (await bridge.request("loadMoreLog", {
+          skip: commits.length,
+          count: 200,
+          snapshot: laneSnapshot,
+          branch: filter.branch || undefined,
+        })) as {
+          graphData: { commits: Commit[]; lanes: Record<string, LaneInfo> };
+          snapshot: LaneSnapshot;
+        } | null;
 
-      if (result?.graphData?.commits?.length) {
-        const newCommits = result.graphData.commits;
-        const allCommits = [...commits, ...newCommits];
-        set({
-          commits: allCommits,
-          visibleCommits: filterCommits(
-            allCommits,
-            get().filter,
-            get().collapsedIntermediates,
-          ),
-          graphLayout: { ...get().graphLayout, ...result.graphData.lanes },
-          laneSnapshot: result.snapshot,
-          hasMore: newCommits.length >= 200,
-          loading: false,
-        });
-      } else {
-        set({ hasMore: false, loading: false });
+        if (generation !== logLoadGeneration) return;
+
+        if (result?.graphData?.commits?.length) {
+          const newCommits = result.graphData.commits;
+          const allCommits = [...commits, ...newCommits];
+          set({
+            commits: allCommits,
+            visibleCommits: filterCommits(
+              allCommits,
+              get().filter,
+              get().collapsedIntermediates,
+            ),
+            graphLayout: { ...get().graphLayout, ...result.graphData.lanes },
+            laneSnapshot: result.snapshot,
+            hasMore: newCommits.length >= 200,
+          });
+        } else {
+          set({ hasMore: false });
+        }
+      } catch (err) {
+        if (generation === logLoadGeneration) {
+          console.error("loadMore failed:", err);
+        }
+      } finally {
+        if (generation === logLoadGeneration) set({ loading: false });
       }
-    } catch (err) {
-      console.error("loadMore failed:", err);
-      set({ loading: false });
+    })();
+
+    activeLogLoad = operation;
+    try {
+      await operation;
+    } finally {
+      if (activeLogLoad === operation) activeLogLoad = null;
     }
   },
 
@@ -435,7 +501,10 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     hash: string,
     mode: SelectionMode = "single",
     allVisibleCommits: string[] = [],
+    source: "user" | "navigation" = "user",
   ) {
+    if (source === "user") navigationGeneration += 1;
+    const generation = ++selectionGeneration;
     const { selectedCommitHashes, lastSelectedCommitHash } = get();
     let nextSelected: string[] = [];
     let nextAnchor = lastSelectedCommitHash;
@@ -496,9 +565,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       const files = (await bridge.request("getCommitRangeFiles", {
         hashes: orderedHashes,
       })) as DiffFile[] | null;
-      set({ commitFiles: files ?? [] });
+      if (generation === selectionGeneration) {
+        set({ commitFiles: files ?? [] });
+      }
     } catch (err) {
-      console.error("selectCommit failed:", err);
+      if (generation === selectionGeneration) {
+        console.error("selectCommit failed:", err);
+      }
     }
   },
 
@@ -534,6 +607,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   setFilter(partial: Partial<PanelFilter>) {
+    navigationGeneration += 1;
     const { filter: current, selectedCommitHashes, commits } = get();
     const next = { ...current, ...partial };
 
@@ -659,17 +733,43 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   async navigateToRef(ref, targetHash) {
+    const generation = ++navigationGeneration;
+    const filter = get().filter;
+    const hasActiveFilter = Object.values(filter).some(Boolean);
+
+    // Navigate means reveal this ref's head in the main log. Any active filter
+    // can hide that commit, so clear it and await the replacement log before
+    // searching or paginating.
+    if (hasActiveFilter) {
+      set({
+        filter: {
+          searchQuery: "",
+          branch: "",
+          author: "",
+          dateRange: "",
+          file: "",
+        },
+        pendingSelectionFromFilter: [],
+        collapsedSequenceIds: new Set(),
+        collapsedIntermediates: new Map(),
+      });
+      await get().fetchInitialData();
+    } else if (activeLogLoad) {
+      await activeLogLoad;
+    }
+
+    if (generation !== navigationGeneration) return;
+
     let visibleHashes = get().visibleCommits.map((commit) => commit.hash);
-    let pagesLoaded = 0;
-    while (
-      !visibleHashes.includes(targetHash) &&
-      get().hasMore &&
-      !get().loading &&
-      pagesLoaded < 50
-    ) {
+    while (!visibleHashes.includes(targetHash) && get().hasMore) {
+      if (activeLogLoad) await activeLogLoad;
+      if (generation !== navigationGeneration) return;
+      visibleHashes = get().visibleCommits.map((commit) => commit.hash);
+      if (visibleHashes.includes(targetHash) || !get().hasMore) break;
+
       const previousCount = get().commits.length;
       await get().loadMore();
-      pagesLoaded += 1;
+      if (generation !== navigationGeneration) return;
       visibleHashes = get().visibleCommits.map((commit) => commit.hash);
       if (get().commits.length === previousCount) break;
     }
@@ -683,8 +783,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       );
       return;
     }
-    await get().selectCommit(targetHash, "single", visibleHashes);
-    set({ scrollTargetHash: targetHash });
+    await get().selectCommit(targetHash, "single", visibleHashes, "navigation");
+    if (
+      generation === navigationGeneration &&
+      get().selectedCommitHash === targetHash
+    ) {
+      set({ scrollTargetHash: targetHash });
+    }
   },
 
   clearScrollTarget() {
@@ -717,6 +822,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   toggleSequenceCollapse(sequenceId: string, intermediates: string[]) {
+    const fileGeneration = ++selectionGeneration;
     const {
       commits,
       filter,
@@ -765,7 +871,9 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
           const files = (await bridge.request("getCommitRangeFiles", {
             hashes,
           })) as DiffFile[] | null;
-          set({ commitFiles: files ?? [] });
+          if (fileGeneration === selectionGeneration) {
+            set({ commitFiles: files ?? [] });
+          }
         } catch (err) {
           console.error("toggleSequenceCollapse failed to load files:", err);
         }
@@ -779,6 +887,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   resetForRepoSwitch() {
+    invalidateRepoAsyncWork();
     const { filter } = get();
     // On a repo→repo switch the old repo's display/selection/range/collapse
     // data must be dropped IMMEDIATELY: the new repo's fetch is async, and if
@@ -799,10 +908,12 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         dateRange: filter.dateRange,
         file: "",
       },
+      loading: false,
     });
   },
 
   clearForNoRepo() {
+    invalidateRepoAsyncWork();
     const { filter } = get();
     // Wipe repo-bound display data + repo-scoped filter fields; keep carryover
     // (search/author/date) since they are not repo-bound and a future repo may
@@ -818,6 +929,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         file: "",
       },
       hasMore: true,
+      loading: false,
     });
   },
 }));

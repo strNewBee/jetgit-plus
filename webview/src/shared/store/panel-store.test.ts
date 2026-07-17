@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitRefIdentity } from "../types/git";
+import type { Commit, GitRefIdentity } from "../types/git";
 
 // Capture the event handler registered by panel-store at import time so the
 // test can dispatch events into it. panel-store calls bridge.onEvent(cb) once
@@ -32,6 +32,37 @@ function emit(event: string, data: unknown): void {
     throw new Error("panel event handler was never registered");
   }
   panelEventHandler(event, data);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function commit(hash: string): Commit {
+  return {
+    hash,
+    shortHash: hash.slice(0, 8),
+    parents: [],
+    authorName: "author",
+    authorEmail: "author@example.com",
+    authorDate: "2026-07-17T00:00:00.000Z",
+    subject: hash,
+    body: "",
+    refs: [],
+  };
+}
+
+function graphResult(commits: Commit[]) {
+  return {
+    graphData: { commits, lanes: {} },
+    snapshot: { activeLanes: [], laneColors: [], nextColorIndex: 0 },
+  };
 }
 
 describe("panel-store operationInProgress per-repo filter", () => {
@@ -614,6 +645,13 @@ describe("panel-store ref selection", () => {
     usePanelStore.setState({
       commits: [{ hash: "tip" } as never],
       visibleCommits: [{ hash: "tip" } as never],
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
       scrollTargetHash: null,
     });
 
@@ -639,6 +677,7 @@ describe("panel-store ref selection", () => {
       visibleCommits: [],
       hasMore: true,
       loading: false,
+      scrollTargetHash: null,
       loadMore,
     });
 
@@ -648,5 +687,244 @@ describe("panel-store ref selection", () => {
     expect(usePanelStore.getState().selectedCommitHash).toBe("old-tip");
     expect(usePanelStore.getState().scrollTargetHash).toBe("old-tip");
     usePanelStore.setState({ loadMore: originalLoadMore });
+  });
+
+  it("clears an existing branch filter before navigating to another ref", async () => {
+    const request = vi.mocked(bridge.request);
+    request.mockReset();
+    request.mockImplementation(async (command, params) => {
+      if (command === "getGraphData") {
+        expect((params as { branch?: string }).branch).toBeUndefined();
+        return graphResult([commit("target-tip")]);
+      }
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    usePanelStore.setState({
+      commits: [commit("branch-a-tip")],
+      visibleCommits: [commit("branch-a-tip")],
+      filter: {
+        searchQuery: "",
+        branch: "refs/heads/branch-a",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      hasMore: false,
+      loading: false,
+    });
+
+    await usePanelStore.getState().navigateToRef(localMain, "target-tip");
+
+    expect(usePanelStore.getState().filter.branch).toBe("");
+    expect(usePanelStore.getState().selectedCommitHash).toBe("target-tip");
+    expect(usePanelStore.getState().scrollTargetHash).toBe("target-tip");
+    expect(request).not.toHaveBeenCalledWith(
+      "showErrorNotification",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("waits for an active log load instead of reporting a false navigation miss", async () => {
+    const request = vi.mocked(bridge.request);
+    const graph = deferred<ReturnType<typeof graphResult>>();
+    request.mockReset();
+    request.mockImplementation(async (command) => {
+      if (command === "getGraphData") return graph.promise;
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    usePanelStore.setState({
+      commits: [],
+      visibleCommits: [],
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      hasMore: true,
+      loading: false,
+      scrollTargetHash: null,
+    });
+
+    const loading = usePanelStore.getState().fetchInitialData();
+    const navigation = usePanelStore
+      .getState()
+      .navigateToRef(localMain, "loaded-tip");
+    graph.resolve(graphResult([commit("loaded-tip")]));
+    await Promise.all([loading, navigation]);
+
+    expect(usePanelStore.getState().selectedCommitHash).toBe("loaded-tip");
+    expect(usePanelStore.getState().scrollTargetHash).toBe("loaded-tip");
+    expect(request).not.toHaveBeenCalledWith(
+      "showErrorNotification",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("lets a later filter change cancel an in-flight paginated navigation", async () => {
+    const request = vi.mocked(bridge.request);
+    const page = deferred<ReturnType<typeof graphResult>>();
+    request.mockReset();
+    request.mockImplementation(async (command) => {
+      if (command === "loadMoreLog") return page.promise;
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    const current = commit("keep-current");
+    usePanelStore.setState({
+      commits: [current],
+      visibleCommits: [current],
+      selectedCommitHash: current.hash,
+      selectedCommitHashes: [current.hash],
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      hasMore: true,
+      loading: false,
+      scrollTargetHash: null,
+    });
+
+    const navigation = usePanelStore
+      .getState()
+      .navigateToRef(localMain, "target-tip");
+    await vi.waitFor(() => {
+      expect(request).toHaveBeenCalledWith("loadMoreLog", expect.anything());
+    });
+    usePanelStore.getState().setFilter({ searchQuery: "keep" });
+    page.resolve(graphResult([commit("target-tip")]));
+    await navigation;
+
+    expect(usePanelStore.getState().filter.searchQuery).toBe("keep");
+    expect(usePanelStore.getState().selectedCommitHash).toBe(current.hash);
+    expect(usePanelStore.getState().scrollTargetHash).toBeNull();
+    expect(request).not.toHaveBeenCalledWith(
+      "showErrorNotification",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("lets a later manual commit selection cancel an in-flight navigation", async () => {
+    const request = vi.mocked(bridge.request);
+    const page = deferred<ReturnType<typeof graphResult>>();
+    request.mockReset();
+    request.mockImplementation(async (command) => {
+      if (command === "loadMoreLog") return page.promise;
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    const current = commit("current");
+    const manual = commit("manual");
+    usePanelStore.setState({
+      commits: [current, manual],
+      visibleCommits: [current, manual],
+      selectedCommitHash: current.hash,
+      selectedCommitHashes: [current.hash],
+      filter: {
+        searchQuery: "",
+        branch: "",
+        author: "",
+        dateRange: "",
+        file: "",
+      },
+      hasMore: true,
+      loading: false,
+      scrollTargetHash: null,
+    });
+
+    const navigation = usePanelStore
+      .getState()
+      .navigateToRef(localMain, "target-tip");
+    await vi.waitFor(() => {
+      expect(request).toHaveBeenCalledWith("loadMoreLog", expect.anything());
+    });
+    await usePanelStore
+      .getState()
+      .selectCommit(manual.hash, "single", [current.hash, manual.hash]);
+    page.resolve(graphResult([commit("target-tip")]));
+    await navigation;
+
+    expect(usePanelStore.getState().selectedCommitHash).toBe(manual.hash);
+    expect(usePanelStore.getState().scrollTargetHash).toBeNull();
+  });
+});
+
+describe("panel-store async response ordering", () => {
+  beforeEach(() => {
+    vi.mocked(bridge.request).mockReset();
+    usePanelStore.getState().resetForRepoSwitch();
+    usePanelStore.setState({ loading: false, hasMore: true });
+  });
+
+  it("discards an older graph response that resolves after a newer filter", async () => {
+    const request = vi.mocked(bridge.request);
+    const older = deferred<ReturnType<typeof graphResult>>();
+    const newer = deferred<ReturnType<typeof graphResult>>();
+    request.mockImplementation(async (command, params) => {
+      if (command === "getGraphData") {
+        return (params as { branch?: string }).branch === "branch-a"
+          ? older.promise
+          : newer.promise;
+      }
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+
+    usePanelStore.setState((state) => ({
+      filter: { ...state.filter, branch: "branch-a" },
+    }));
+    const first = usePanelStore.getState().fetchInitialData();
+    usePanelStore.setState((state) => ({
+      filter: { ...state.filter, branch: "branch-b" },
+    }));
+    const second = usePanelStore.getState().fetchInitialData();
+
+    newer.resolve(graphResult([commit("branch-b-tip")]));
+    await vi.waitFor(() => {
+      expect(usePanelStore.getState().commits[0]?.hash).toBe("branch-b-tip");
+    });
+    older.resolve(graphResult([commit("branch-a-tip")]));
+    await Promise.all([first, second]);
+
+    expect(usePanelStore.getState().filter.branch).toBe("branch-b");
+    expect(usePanelStore.getState().commits.map((item) => item.hash)).toEqual([
+      "branch-b-tip",
+    ]);
+    expect(usePanelStore.getState().loading).toBe(false);
+  });
+
+  it("keeps commit files aligned with the latest selected commit", async () => {
+    const request = vi.mocked(bridge.request);
+    const older = deferred<never[]>();
+    const newer = deferred<never[]>();
+    request.mockImplementation(async (command, params) => {
+      if (command !== "getCommitRangeFiles") return null;
+      const hashes = (params as { hashes: string[] }).hashes;
+      return hashes[0] === "older" ? older.promise : newer.promise;
+    });
+
+    const first = usePanelStore.getState().selectCommit("older");
+    const second = usePanelStore.getState().selectCommit("newer");
+    newer.resolve([{ newPath: "newer.ts" } as never]);
+    await second;
+    older.resolve([{ newPath: "older.ts" } as never]);
+    await first;
+
+    expect(usePanelStore.getState().selectedCommitHash).toBe("newer");
+    expect(usePanelStore.getState().commitFiles).toEqual([
+      { newPath: "newer.ts" },
+    ]);
   });
 });
