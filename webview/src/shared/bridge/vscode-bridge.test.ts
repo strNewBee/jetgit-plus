@@ -59,14 +59,15 @@ describe("bridge repo context + stale drop", () => {
       }
     ).id;
     bridge.setRepoContext("/r2"); // bump generation → previous request is now stale
-    deliver!({ type: "response", id, success: true, data: [] });
+    if (!deliver) throw new Error("message listener was not installed");
+    deliver({ type: "response", id, success: true, data: [] });
 
     await expect(p).rejects.toThrow(/stale/i);
     window.addEventListener = origAdd;
   });
 
   it("preserves host error codes", async () => {
-    const posted: any[] = [];
+    const posted: unknown[] = [];
     let deliver!: (m: unknown) => void;
     installAcquire((m) => posted.push(m));
     const origAdd = window.addEventListener;
@@ -79,9 +80,10 @@ describe("bridge repo context + stale drop", () => {
     const bridge = createVSCodeBridge();
     bridge.setRepoContext("/r");
     const request = bridge.request("commitChanges");
+    const id = (posted[0] as { id: string }).id;
     deliver({
       type: "response",
-      id: posted[0].id,
+      id,
       success: false,
       error: { code: "REPO_NOT_FOUND", message: "missing" },
     });
@@ -90,7 +92,7 @@ describe("bridge repo context + stale drop", () => {
   });
 
   it("keeps a global selectRepo request alive across its own context event", async () => {
-    const posted: any[] = [];
+    const posted: unknown[] = [];
     let deliver!: (m: unknown) => void;
     installAcquire((m) => posted.push(m));
     const origAdd = window.addEventListener;
@@ -107,11 +109,12 @@ describe("bridge repo context + stale drop", () => {
       { repoId: "/r2" },
       { scope: "global" },
     );
-    expect(posted[0].repoId).toBeUndefined();
+    const postedRequest = posted[0] as { id: string; repoId?: string };
+    expect(postedRequest.repoId).toBeUndefined();
     bridge.setRepoContext("/r2");
     deliver({
       type: "response",
-      id: posted[0].id,
+      id: postedRequest.id,
       success: true,
       data: { activeId: "/r2" },
     });

@@ -52,7 +52,7 @@ function activeRepoChanged(repoId: string | null, repoName: string = "") {
 
 /** Set (or clear) the host-supplied seed attribute on #root. */
 function seedRootRepoId(value: string | null) {
-  const root = document.getElementById("root");
+  let root = document.getElementById("root");
   if (value === null) {
     if (root) delete root.dataset.repoId;
   } else {
@@ -60,8 +60,9 @@ function seedRootRepoId(value: string | null) {
       const el = document.createElement("div");
       el.id = "root";
       document.body.appendChild(el);
+      root = el;
     }
-    document.getElementById("root")!.dataset.repoId = value;
+    root.dataset.repoId = value;
   }
 }
 

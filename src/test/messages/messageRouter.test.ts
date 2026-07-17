@@ -125,9 +125,9 @@ describe("MessageRouter repo context", () => {
     const router = new MessageRouter();
     router.enableStrictRepoContext();
     router.handle("getRepos", async () => ({ repos: [], activeId: null }));
-    const responses: any[] = [];
+    const responses: ResponseMessage[] = [];
     const wv = fakeWebview((message) => responses.push(message));
-    (router as any).handleRequest(wv, {
+    (router as unknown as RouterWithHandleRequest).handleRequest(wv, {
       type: "request",
       id: "strict-agnostic",
       command: "getRepos",
