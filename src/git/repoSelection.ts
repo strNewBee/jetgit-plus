@@ -158,11 +158,15 @@ export class RepoSelectionError extends Error {
  *   removes the old window where the initial (stale) result was applied +
  *   broadcast BEFORE the latest pass — which briefly re-registered + watched a
  *   repo that the latest change had removed.
- * - On `discover` OR `applyDiscovered` failure, `pendingFolders` is CLEARED. The
- *   old code left a stashed pending untouched in the catch, so a later
- *   `reconcile(latest)` could apply `latest` and THEN the stale stash — landing
- *   on the stale value last. Clearing on failure guarantees only a fresh
- *   `reconcile()` call (which sets a new in-flight pass) can reintroduce work.
+ * - On `discover` OR `applyDiscovered` failure, a pending is NEVER dropped
+ *   (Fix-9). `pendingFolders` only ever holds the LATEST change that arrived
+ *   during the in-flight scan (it is overwritten on every `reconcile()` and
+ *   consumed only on a successful discover), so if one is present when a scan
+ *   fails the loop re-discovers it rather than clearing it; the pass bails ONLY
+ *   when the scan failed AND no newer change arrived. (This reverses the Fix-5
+ *   "clear-on-failure", which was an over-correction: the restructured loop has
+ *   no separate stale-drain step, so there is no stale stash to protect against
+ *   — clearing here dropped the newest update on the floor.)
  *
  * `discover` is injected so tests can introduce deterministic delays, and
  * `applyDiscovered` (the registry mutation) is injected so the same
@@ -235,22 +239,54 @@ export class FolderReconciler {
   ): Promise<void> {
     try {
       let current = initialFolders;
-      // Re-discover loop: keep going as long as a newer change supersedes the
-      // in-flight discovery. Bounded by the number of distinct concurrent
-      // `reconcile()` calls, which in practice is tiny (workspace-folder
-      // changes arrive in bursts).
+      // Re-discover loop. One uniform rule drives every iteration: `pendingFolders`
+      // holds ONLY the latest workspace state that arrived DURING an in-flight
+      // discover (it is overwritten on every `reconcile()` and consumed only by a
+      // `continue` below — there is NO separate stale-drain step). So a non-null
+      // pending always means "a newer change superseded what we just (tried to)
+      // discover" and must be re-discovered; a null pending always means "no newer
+      // change arrived" and the pass may settle (apply the result or bail on
+      // failure). This holds on BOTH the success path (a newer change during a
+      // successful discover → discard the stale result, re-discover) and the
+      // failure paths (a newer change during a FAILING discover → re-discover it;
+      // the newest state is never dropped just because the scan threw).
+      //
+      // Boundedness (re-derived): each iteration either (a) `break`s, or (b)
+      // `continue`s only when `pendingFolders` was non-null, consuming exactly one
+      // pending (set it to null before continuing). A pending is PRODUCED only by
+      // an external `reconcile()` call that arrives while a discover is `await`ed
+      // (the `running===true` coalescing branch), and each such call OVERWRITES
+      // `pendingFolders` (coalescing to the latest). So the number of `continue`s
+      // is bounded by the number of distinct concurrent `reconcile()` calls that
+      // arrive during discoveries — finite in practice (workspace-folder changes
+      // arrive in bursts). With no new input, the next discover completes with
+      // `pendingFolders === null` → apply (success) or break (failure). There is
+      // no structural infinite loop.
       while (true) {
         let discovered: DiscoveredRepo[];
         try {
           discovered = await this.discover(current);
         } catch (err) {
-          // F6: a failing discovery must not leave a stale pending for a later
-          // pass to re-apply. Log + clear, then bail (running resets below).
+          // Fix-9 (reverses the Fix-5 "F6 clear-on-failure", which was an
+          // over-correction): a discovery failure must NOT drop a pending that
+          // arrived DURING this scan. `pendingFolders` is the LATEST workspace
+          // state (overwritten on every `reconcile()` and consumed only on a
+          // successful discover / a `continue`), so in the restructured loop
+          // there is no separate stale-drain step and thus no stale stash to
+          // protect against — the ONLY thing a non-null pending can hold here is
+          // the newest change that arrived during this failing `await discover`.
+          // Clearing it (the pre-Fix-9 behavior) was pure data loss of the newest
+          // update. Instead: if a pending exists, re-discover it (latest wins);
+          // only bail when the scan failed AND nothing newer arrived.
           console.error(
             "[jetgit-plus] folder discovery failed:",
             err instanceof Error ? (err.stack ?? err) : err,
           );
-          this.pendingFolders = null;
+          if (this.pendingFolders !== null) {
+            current = this.pendingFolders;
+            this.pendingFolders = null;
+            continue;
+          }
           break;
         }
         if (this.pendingFolders !== null) {
@@ -266,13 +302,28 @@ export class FolderReconciler {
         try {
           this.applyDiscovered(discovered);
         } catch (err) {
-          // F6: same rationale as the discovery catch — clear any pending so a
-          // later reconcile() can't drain a stale stash onto a fresh state.
+          // Fix-9: same rule as the discovery catch — never drop a pending on
+          // failure; if one exists, re-discover the latest; only bail when the
+          // apply failed AND nothing newer arrived. (The rule "a pending is never
+          // dropped on failure" holds uniformly regardless of which step threw.)
+          //
+          // In practice `applyDiscovered` is an injected SYNCHRONOUS void, so no
+          // `reconcile()` can interleave during it — `pendingFolders` is
+          // necessarily null here (a concurrent `reconcile` would only be able to
+          // set it during the `await discover` above), so this branch breaks in
+          // the real host. The re-discover is belt-and-suspenders for
+          // correctness/uniformity: IF apply ever became async and a newer change
+          // did arrive during it, the latest folders would still be re-discovered
+          // rather than dropped — the same guarantee the discovery catch gives.
           console.error(
             "[jetgit-plus] folder apply failed:",
             err instanceof Error ? (err.stack ?? err) : err,
           );
-          this.pendingFolders = null;
+          if (this.pendingFolders !== null) {
+            current = this.pendingFolders;
+            this.pendingFolders = null;
+            continue;
+          }
         }
         // No newer change arrived → we've applied the latest. Done.
         break;

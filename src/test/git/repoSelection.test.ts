@@ -876,7 +876,7 @@ describe("Fix-5 (F5) select vs folder-reconciliation mutual exclusion", () => {
   });
 });
 
-describe("Fix-6 (F6a) reconciler failure clears pending (latest wins, not stale stash)", () => {
+describe("Fix-9 reconciler failure re-discovers latest pending (latest wins, not dropped)", () => {
   function controllableDiscover() {
     const calls: Array<{
       folders: Array<{ fsPath: string; name: string }>;
@@ -897,28 +897,28 @@ describe("Fix-6 (F6a) reconciler failure clears pending (latest wins, not stale 
     return { calls, discover };
   }
 
-  it("a failing discovery clears the stashed pending so a later reconcile(latest) lands on latest, not the stale stash", async () => {
-    // F6a reproduction (pre-fix): pass 1's discover() is IN FLIGHT (running=true)
-    // when reconcile(B) is called → pendingFolders=[B] is stashed. Then pass 1's
-    // discover THROWS. The old catch left pendingFolders=[B] untouched, so the
-    // re-discover loop continued with the stale B, applied it, and landed on B
-    // (stale). A later reconcile(C) arrived too late.
+  it("a pending that arrived during a FAILING discovery is re-discovered and applied (latest wins, not dropped)", async () => {
+    // Fix-9 reproduction. Pass 1's discover() is IN FLIGHT (running=true) when
+    // reconcile([B]) is called → pendingFolders=[B] (the LATEST workspace state).
+    // Then pass 1's discover THROWS.
     //
-    // Post-fix: the failing-discover catch CLEARS pendingFolders, so the stale B
-    // is dropped; the pass bails. A fresh reconcile(C) then starts a new pass and
-    // lands on C alone.
+    // Correct behavior (post-Fix-9): `pendingFolders` holds ONLY the latest
+    // change that arrived during the failing `await discover` — there is no
+    // separate stale-drain in the restructured loop, so it is NOT a stale stash.
+    // The failing-discover catch must RE-DISCOVER [B] (take the latest pending,
+    // do one more scan) rather than dropping it. Resolving [B]'s follow-up
+    // discover → [B] is APPLIED. Final applied state is [["/b"]], NOT empty.
     //
-    // This is NON-VACUOUS: reverting the `this.pendingFolders = null` in the
-    // discover catch makes this test FAIL (the stale B is applied and the final
-    // state is B, not C) because the re-discover loop drains the uncleared stash.
+    // This is NON-VACUOUS, both directions: reverting the discover catch to the
+    // pre-Fix-9 over-correction (`this.pendingFolders = null; break;`) makes this
+    // test FAIL — the [B] pending is cleared on the throw, the pass bails, and
+    // the final applied state is `[]` (the [B] update was dropped on the floor)
+    // instead of the expected `[["/b"]]`.
     const { calls, discover } = controllableDiscover();
     const applied: DiscoveredRepo[][] = [];
     const appliedIds = () =>
       applied.map((batch) => batch.map((d) => d.descriptor.id));
 
-    // Pass 1's discover is a controllable deferred that we REJECT, so pass 1
-    // stays in flight (running=true) until we trigger the throw — letting us
-    // stash a real pending during the failing pass.
     const reconciler = new FolderReconciler(
       discover,
       (repos) => applied.push(repos),
@@ -932,54 +932,41 @@ describe("Fix-6 (F6a) reconciler failure clears pending (latest wins, not stale 
     assert.strictEqual(calls.length, 1, "pass 1 discovery is in flight");
     assert.deepStrictEqual(calls[0].folders, [{ fsPath: "/a", name: "a" }]);
 
-    // WHILE pass 1's discovery is in flight, call reconcile(B). running=true so
-    // this stashes pendingFolders=[B] and returns the in-flight tail (p1).
+    // WHILE pass 1's discovery is in flight, call reconcile([B]). running=true so
+    // this stashes pendingFolders=[B] (the LATEST state) and returns p1.
     void reconciler.reconcile([{ fsPath: "/b", name: "b" }]);
 
-    // Now make pass 1's discovery THROW. The catch must CLEAR pendingFolders
-    // (the fix) so the stale [B] is never re-discovered.
+    // Now make pass 1's discovery THROW. The catch must NOT drop [B]: it takes
+    // the latest pending and issues a follow-up discover([B]) (calls[1]).
     calls[0].settled = true;
     calls[0].d.reject(new Error("scan permission denied"));
     await drainMicrotasks();
-    // pass 1 has thrown + been caught; running is reset; nothing applied.
-    await p1;
+    // Nothing applied yet — the throwing pass discovered nothing to apply, and
+    // the re-discover of [B] is still in flight.
     assert.deepStrictEqual(appliedIds(), [], "throwing pass applied nothing");
+    assert.ok(
+      calls.length >= 2,
+      "catch re-discovered the latest pending [B] after the throw",
+    );
+    assert.deepStrictEqual(
+      calls[1].folders,
+      [{ fsPath: "/b", name: "b" }],
+      "follow-up discovery asked for the latest [B], not the stale [A]",
+    );
 
-    // A fresh reconcile(C) arrives. running is false → new in-flight pass.
-    const p3 = reconciler.reconcile([{ fsPath: "/c", name: "c" }]);
-    await drainMicrotasks();
-    assert.ok(calls.length >= 2, "fresh discovery for C was issued");
+    // Resolve the follow-up [B] discovery. runPass applies it (no newer change
+    // arrived during it → apply + break). Final state reflects [B].
+    calls[1].settled = true;
+    calls[1].d.resolve([discovered("/b")]);
+    await p1;
 
-    // Resolve EVERY outstanding discovery the pass requests, echoing the folders
-    // it was asked for (so any stale re-discover the pre-fix bug triggers also
-    // completes, applying its stale result — making the divergence a crisp
-    // assertion failure rather than a timeout). Under post-fix only the [C]
-    // discovery is requested; under pre-fix (clear disabled) the lingering stale
-    // [B] pending makes runPass discard [C] and re-discover [B].
-    const settleAllDiscoveries = async () => {
-      // Bounded: each resolve either applies + breaks (no pending) or re-discovers
-      // once; under both fix and pre-fix the loop terminates within a couple of
-      // iterations. The cap is a guard against an accidental spin.
-      for (let i = 0; i < 8; i++) {
-        await drainMicrotasks();
-        const pending = calls.filter((c) => !c.settled);
-        if (pending.length === 0) break;
-        for (const c of pending) {
-          c.settled = true;
-          c.d.resolve(c.folders.map((f) => discovered(f.fsPath)));
-        }
-      }
-    };
-    await settleAllDiscoveries();
-    await p3;
-
-    // Final applied state is C (latest). The stale [B] was NEVER applied —
-    // pre-fix (catch did not clear pending) the re-discover loop would have
-    // continued with [B] after the throw, applied it, and landed on B.
+    // The LATEST pending ([B]) was RE-DISCOVERED + APPLIED after the throw — NOT
+    // dropped. Pre-Fix-9 (clear-on-failure) this would be `[]`: the catch would
+    // null pendingFolders and bail, silently discarding the newest update.
     assert.deepStrictEqual(
       appliedIds(),
-      [["/c"]],
-      "final state is the latest C, not a stale B stash",
+      [["/b"]],
+      "latest pending [B] applied after the failed discovery (not dropped)",
     );
   });
 });
