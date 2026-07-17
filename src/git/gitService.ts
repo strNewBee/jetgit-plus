@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { GitCache } from "./cache";
+import { JetGitError, JetGitErrorCode } from "./errors";
 import { computeGraphLayout } from "./graphLayout";
 import type {
   BranchInfo,
@@ -146,11 +147,16 @@ export class GitService {
 
     const localFormat = [
       "%(refname:short)",
+      "%(refname)",
       "%(HEAD)",
       "%(upstream:short)",
       "%(upstream:track,nobracket)",
-      "%(objectname:short)",
+      "%(objectname)",
     ].join(REF_FMT_FIELD_SEP);
+
+    const worktreeCheckouts = parseWorktreeCheckouts(
+      await this.execGit(["worktree", "list", "--porcelain"]).catch(() => ""),
+    );
 
     const localOutput = await this.execGit([
       "branch",
@@ -171,18 +177,21 @@ export class GitService {
       }
       const fields = line.split(FIELD_SEP);
       const name = fields[0]?.trim() ?? "";
-      const isCurrent = fields[1]?.trim() === "*";
-      const upstream = fields[2]?.trim() || undefined;
-      const track = fields[3]?.trim() ?? "";
-      const lastCommitHash = fields[4]?.trim() ?? "";
+      const fullRef = fields[1]?.trim() ?? `refs/heads/${name}`;
+      const isCurrent = fields[2]?.trim() === "*";
+      const upstream = fields[3]?.trim() || undefined;
+      const track = fields[4]?.trim() ?? "";
+      const lastCommitHash = fields[5]?.trim() ?? "";
 
       const { ahead, behind } = parseTrack(track);
 
       branches.push({
         name,
+        fullRef,
         isRemote: false,
         isCurrent,
         upstream,
+        checkedOutWorktreePath: worktreeCheckouts.get(fullRef),
         ahead,
         behind,
         lastCommitHash,
@@ -195,7 +204,8 @@ export class GitService {
       }
       const fields = line.split(FIELD_SEP);
       const name = fields[0]?.trim() ?? "";
-      const lastCommitHash = fields[4]?.trim() ?? "";
+      const fullRef = fields[1]?.trim() ?? `refs/remotes/${name}`;
+      const lastCommitHash = fields[5]?.trim() ?? "";
 
       // Skip HEAD pointers like origin/HEAD
       if (name.endsWith("/HEAD")) {
@@ -204,6 +214,7 @@ export class GitService {
 
       branches.push({
         name,
+        fullRef,
         isRemote: true,
         isCurrent: false,
         ahead: 0,
@@ -276,7 +287,9 @@ export class GitService {
 
     const tagFormat = [
       "%(refname:short)",
-      "%(objectname:short)",
+      "%(refname)",
+      "%(objectname)",
+      "%(*objectname)",
       "%(objecttype)",
       "%(contents:subject)",
     ].join(REF_FMT_FIELD_SEP);
@@ -293,11 +306,15 @@ export class GitService {
         continue;
       }
       const fields = line.split(FIELD_SEP);
+      const hash = fields[2]?.trim() ?? "";
+      const peeledHash = fields[3]?.trim() ?? "";
       tags.push({
         name: fields[0]?.trim() ?? "",
-        hash: fields[1]?.trim() ?? "",
-        isAnnotated: fields[2]?.trim() === "tag",
-        message: fields[3]?.trim() || undefined,
+        fullRef: fields[1]?.trim() ?? `refs/tags/${fields[0]?.trim() ?? ""}`,
+        hash,
+        targetCommitHash: peeledHash || hash,
+        isAnnotated: fields[4]?.trim() === "tag",
+        message: fields[5]?.trim() || undefined,
       });
     }
 
@@ -733,6 +750,62 @@ export class GitService {
       args.push("origin", branchName);
     }
     await this.execGit(args);
+    this.invalidateCache();
+  }
+
+  async updateBranch(branchName: string): Promise<void> {
+    const localRef = `refs/heads/${branchName}`;
+    const trackingOutput = await this.execGit([
+      "for-each-ref",
+      `--format=%(refname)${REF_FMT_FIELD_SEP}%(upstream:remotename)${REF_FMT_FIELD_SEP}%(upstream:remoteref)`,
+      localRef,
+    ]);
+    const [resolvedRef, remote, remoteRef] = trackingOutput
+      .trim()
+      .split(FIELD_SEP);
+    if (resolvedRef !== localRef) {
+      throw new JetGitError(
+        JetGitErrorCode.BRANCH_NOT_FOUND,
+        `Local branch '${branchName}' does not exist`,
+      );
+    }
+    if (!remote || !remoteRef) {
+      throw new JetGitError(
+        JetGitErrorCode.BRANCH_NO_UPSTREAM,
+        `Branch '${branchName}' has no configured upstream`,
+      );
+    }
+
+    const currentBranch = (
+      await this.execGit(["branch", "--show-current"])
+    ).trim();
+    if (currentBranch === branchName) {
+      await this.pull();
+      return;
+    }
+
+    const checkedOutPath = parseWorktreeCheckouts(
+      await this.execGit(["worktree", "list", "--porcelain"]),
+    ).get(localRef);
+    if (checkedOutPath) {
+      throw new JetGitError(
+        JetGitErrorCode.BRANCH_CHECKED_OUT_IN_WORKTREE,
+        `Branch '${branchName}' is checked out in worktree '${checkedOutPath}'`,
+      );
+    }
+
+    try {
+      await this.execGit(["fetch", remote, `${remoteRef}:${localRef}`]);
+    } catch (error) {
+      const detail = gitErrorText(error);
+      if (/non-fast-forward|\[rejected\]/i.test(detail)) {
+        throw new JetGitError(
+          JetGitErrorCode.BRANCH_NON_FAST_FORWARD,
+          `Branch '${branchName}' cannot be fast-forwarded from its upstream`,
+        );
+      }
+      throw error;
+    }
     this.invalidateCache();
   }
 
@@ -1642,6 +1715,30 @@ export class GitService {
   invalidateCache(pattern?: string): void {
     this.cache.invalidate(pattern);
   }
+}
+
+function gitErrorText(error: unknown): string {
+  if (error && typeof error === "object") {
+    const stderr = "stderr" in error ? String(error.stderr ?? "") : "";
+    const message = "message" in error ? String(error.message ?? "") : "";
+    return `${message}\n${stderr}`;
+  }
+  return String(error);
+}
+
+function parseWorktreeCheckouts(output: string): Map<string, string> {
+  const result = new Map<string, string>();
+  let worktreePath: string | null = null;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      worktreePath = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ") && worktreePath) {
+      result.set(line.slice("branch ".length), worktreePath);
+    } else if (!line.trim()) {
+      worktreePath = null;
+    }
+  }
+  return result;
 }
 
 function parseDiffNameStatus(output: string): DiffFile[] {

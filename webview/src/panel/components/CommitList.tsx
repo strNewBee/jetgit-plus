@@ -36,6 +36,8 @@ export function CommitList({
   const loadMore = usePanelStore((s) => s.loadMore);
   const loading = usePanelStore((s) => s.loading);
   const selectCommit = usePanelStore((s) => s.selectCommit);
+  const scrollTargetHash = usePanelStore((s) => s.scrollTargetHash);
+  const clearScrollTarget = usePanelStore((s) => s.clearScrollTarget);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(
@@ -171,6 +173,16 @@ export function CommitList({
     overscan: 20,
   });
   const allVisibleCommitHashes = visibleCommits.map((commit) => commit.hash);
+
+  useEffect(() => {
+    if (!scrollTargetHash) return;
+    const index = visibleCommits.findIndex(
+      (commit) => commit.hash === scrollTargetHash,
+    );
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "center" });
+    clearScrollTarget();
+  }, [clearScrollTarget, scrollTargetHash, virtualizer, visibleCommits]);
 
   const handleCommitClick = useModifierClickSelection<string>((hash, mode) => {
     void selectCommit(hash, mode, allVisibleCommitHashes);

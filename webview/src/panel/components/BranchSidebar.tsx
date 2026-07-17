@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { bridge } from "../../shared/bridge";
+import { bridge, bridgeWithProgress } from "../../shared/bridge";
 import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
 import { usePanelStore } from "../../shared/store/panel-store";
@@ -11,9 +11,29 @@ export function BranchSidebar({
   onTogglePanel?: () => void;
   onNewBranch?: () => void;
 } = {}) {
-  const selectedBranches = usePanelStore((s) => s.selectedBranches);
-  const selectedBranch =
-    selectedBranches.length === 1 ? selectedBranches[0] : null;
+  const selectedRefs = usePanelStore((s) => s.selectedRefs);
+  const branches = usePanelStore((s) => s.branches);
+  const tags = usePanelStore((s) => s.tags);
+  const setFavorite = usePanelStore((s) => s.setFavorite);
+  const navigateToRef = usePanelStore((s) => s.navigateToRef);
+  const selectedRef = selectedRefs.length === 1 ? selectedRefs[0] : null;
+  const selectedBranch = selectedRef
+    ? branches.find(
+        (branch) =>
+          branch.name === selectedRef.name &&
+          (branch.isRemote ? "remote" : "local") === selectedRef.type,
+      )
+    : undefined;
+  const selectedTag =
+    selectedRef?.type === "tag"
+      ? tags.find((tag) => tag.name === selectedRef.name)
+      : undefined;
+  const selectedLocalBranch =
+    selectedRef?.type === "local" ? selectedBranch : undefined;
+  const selectedFavorite =
+    selectedBranch?.isFavorite ?? selectedTag?.isFavorite;
+  const selectedTargetHash =
+    selectedBranch?.lastCommitHash ?? selectedTag?.targetCommitHash;
   const branchGroupByDirectory = usePanelStore((s) => s.branchGroupByDirectory);
   const toggleBranchGroupByDirectory = usePanelStore(
     (s) => s.toggleBranchGroupByDirectory,
@@ -27,37 +47,42 @@ export function BranchSidebar({
     }
   }, [onNewBranch]);
 
-  const handleUpdateSelected = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("pullBranch", { branchName: selectedBranch });
+  const handleUpdateSelected = useCallback(async () => {
+    if (!selectedLocalBranch) return;
+    try {
+      await bridgeWithProgress("updateBranch", {
+        branchName: selectedLocalBranch.name,
+      });
+    } catch (error) {
+      await showActionError("Update failed", error);
     }
-  }, [selectedBranch]);
+  }, [selectedLocalBranch]);
 
   const handleDeleteBranch = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("deleteBranchPrompt", { branchName: selectedBranch });
+    if (selectedLocalBranch) {
+      bridge.request("deleteBranchPrompt", {
+        branchName: selectedLocalBranch.name,
+      });
     }
-  }, [selectedBranch]);
-
-  const handleShowMyBranches = useCallback(() => {
-    bridge.request("showMyBranches");
-  }, []);
+  }, [selectedLocalBranch]);
 
   const handleFetch = useCallback(() => {
     bridge.request("fetchAll");
   }, []);
 
-  const handleToggleFavorite = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("toggleFavorite", { branchName: selectedBranch });
+  const handleToggleFavorite = useCallback(async () => {
+    if (!selectedRef || selectedFavorite === undefined) return;
+    try {
+      await setFavorite(selectedRef, !selectedFavorite);
+    } catch (error) {
+      await showActionError("Could not update favorite", error);
     }
-  }, [selectedBranch]);
+  }, [selectedFavorite, selectedRef, setFavorite]);
 
-  const handleNavigateToHead = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("navigateToHead", { branchName: selectedBranch });
-    }
-  }, [selectedBranch]);
+  const handleNavigateToHead = useCallback(async () => {
+    if (!selectedRef || !selectedTargetHash) return;
+    await navigateToRef(selectedRef, selectedTargetHash);
+  }, [navigateToRef, selectedRef, selectedTargetHash]);
 
   const handleExpandAll = useCallback(() => {
     window.dispatchEvent(new CustomEvent("branch-tree-expand-all"));
@@ -84,6 +109,7 @@ export function BranchSidebar({
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="New Branch"
           onClick={handleNewBranch}
         >
           <IconAdd />
@@ -93,8 +119,9 @@ export function BranchSidebar({
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Update Selected"
           onClick={handleUpdateSelected}
-          disabled={!selectedBranch}
+          disabled={!selectedLocalBranch}
         >
           <IconUpdate />
         </button>
@@ -103,8 +130,9 @@ export function BranchSidebar({
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Delete Branch"
           onClick={handleDeleteBranch}
-          disabled={!selectedBranch}
+          disabled={!selectedLocalBranch}
         >
           <IconDelete />
         </button>
@@ -117,19 +145,11 @@ export function BranchSidebar({
           wrong repo). When re-adding, construct the two diff URIs with
           buildGitContentUri(ref, filePath, repoId) (or carry ?ref=&repo=)
           exactly like the other diff handlers (e.g. showIdeaShelfFileDiff). */}
-      <Tooltip text="Show My Branches">
-        <button
-          type="button"
-          className="branch-sidebar-btn"
-          onClick={handleShowMyBranches}
-        >
-          <IconSearch />
-        </button>
-      </Tooltip>
       <Tooltip text="Fetch">
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Fetch"
           onClick={handleFetch}
         >
           <IconFetch />
@@ -139,18 +159,20 @@ export function BranchSidebar({
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Mark/Unmark As Favorite"
           onClick={handleToggleFavorite}
-          disabled={!selectedBranch}
+          disabled={!selectedRef || selectedFavorite === undefined}
         >
           <IconStar />
         </button>
       </Tooltip>
-      <Tooltip text="Navigate Log to Selected Branch Head">
+      <Tooltip text="Navigate Log to Selected Ref Head">
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Navigate Log to Selected Ref Head"
           onClick={handleNavigateToHead}
-          disabled={!selectedBranch}
+          disabled={!selectedRef || !selectedTargetHash}
         >
           <IconLocate />
         </button>
@@ -204,6 +226,7 @@ function SettingsButton() {
         <button
           type="button"
           className="branch-sidebar-btn"
+          aria-label="Branch Settings"
           ref={btnRef}
           onClick={() => setOpen(!open)}
         >
@@ -216,6 +239,11 @@ function SettingsButton() {
 }
 
 function SettingsMenu({ onClose }: { onClose: () => void }) {
+  const showTags = usePanelStore((state) => state.showTags);
+  const singleClickAction = usePanelStore((state) => state.singleClickAction);
+  const setPreferences = usePanelStore(
+    (state) => state.setBranchDashboardPreferences,
+  );
   const menuRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return;
@@ -251,38 +279,48 @@ function SettingsMenu({ onClose }: { onClose: () => void }) {
         type="button"
         className="commit-context-menu-item"
         onClick={() => {
-          bridge.request("setSingleClickAction", {
-            action: "updateBranchFilter",
-          });
+          void setPreferences({ singleClickAction: "filter" });
           onClose();
         }}
       >
-        <span>Update Branch Filter</span>
+        <span>
+          {singleClickAction === "filter" ? "✓ " : ""}Update Branch Filter
+        </span>
       </button>
       <button
         type="button"
         className="commit-context-menu-item"
         onClick={() => {
-          bridge.request("setSingleClickAction", {
-            action: "navigateToHead",
-          });
+          void setPreferences({ singleClickAction: "navigate" });
           onClose();
         }}
       >
-        <span>Navigate Log to Branch Head</span>
+        <span>
+          {singleClickAction === "navigate" ? "✓ " : ""}Navigate Log to Ref Head
+        </span>
       </button>
       <div className="commit-context-menu-separator" />
       <button
         type="button"
         className="commit-context-menu-item"
         onClick={() => {
-          bridge.request("toggleShowTags");
+          void setPreferences({ showTags: !showTags });
           onClose();
         }}
       >
-        <span>✓ Show Tags</span>
+        <span>{showTags ? "✓ " : ""}Show Tags</span>
       </button>
     </div>
+  );
+}
+
+async function showActionError(prefix: string, error: unknown): Promise<void> {
+  if ((error as { code?: string })?.code === "STALE_RESPONSE") return;
+  const message = error instanceof Error ? error.message : String(error);
+  await bridge.request(
+    "showErrorNotification",
+    { message: `${prefix}: ${message}` },
+    { scope: "global" },
   );
 }
 
@@ -325,20 +363,6 @@ function IconDelete() {
         clipRule="evenodd"
         d="M7 2H9C9.55228 2 10 2.44772 10 3H6C6 2.44772 6.44772 2 7 2ZM5 3C5 1.89543 5.89543 1 7 1H9C10.1046 1 11 1.89543 11 3H13C13.5523 3 14 3.44772 14 4V5V6H13V13C13 14.1046 12.1046 15 11 15H5C3.89543 15 3 14.1046 3 13V6H2V5V4C2 3.44772 2.44772 3 3 3H5ZM11 4H10H6H5H3V5H4H12H13V4H11ZM4 6H12V13C12 13.5523 11.5523 14 11 14H5C4.44772 14 4 13.5523 4 13V6ZM6.5 7C6.22386 7 6 7.22386 6 7.5V11.5C6 11.7761 6.22386 12 6.5 12C6.77614 12 7 11.7761 7 11.5V7.5C7 7.22386 6.77614 7 6.5 7ZM9 7.5C9 7.22386 9.22386 7 9.5 7C9.77614 7 10 7.22386 10 7.5V11.5C10 11.7761 9.77614 12 9.5 12C9.22386 12 9 11.7761 9 11.5V7.5Z"
         fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-/** expui/general/search.svg */
-function IconSearch() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="7" cy="7" r="4.5" stroke="currentColor" />
-      <path
-        d="M10.1992 10.2002L13.4992 13.4961"
-        stroke="currentColor"
-        strokeLinecap="round"
       />
     </svg>
   );

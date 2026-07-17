@@ -10,7 +10,10 @@
   border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
   border-radius: 4px;
   font-size: 12px;
-  white-space: nowrap;
+  box-sizing: border-box;
+  max-width: min(480px, calc(100vw - 8px));
+  white-space: normal;
+  overflow-wrap: anywhere;
   z-index: 99999;
   pointer-events: none;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);

@@ -5,7 +5,17 @@ import { Tooltip } from "../../shared/components/Tooltip";
 import { useModifierClickSelection } from "../../shared/hooks/useModifierClickSelection";
 import { usePreventSelect } from "../../shared/hooks/usePreventSelect";
 import { usePanelStore } from "../../shared/store/panel-store";
-import type { BranchInfo, TagInfo } from "../../shared/types/git";
+import type {
+  BranchInfo,
+  GitRefIdentity,
+  TagInfo,
+} from "../../shared/types/git";
+import {
+  branchIdentity,
+  compareFavoriteRefs,
+  refKey,
+  tagIdentity,
+} from "../utils/refUtils";
 import { BranchSidebar as BranchSidebarComponent } from "./BranchSidebar";
 import { CreateBranchDialog } from "./CreateBranchDialog";
 import { PushDialog } from "./PushDialog";
@@ -191,8 +201,18 @@ function containsCurrentBranch(node: TreeNode): boolean {
   return node.children.some(containsCurrentBranch);
 }
 
+function containsFavorite(node: TreeNode): boolean {
+  if (node.isLeaf) {
+    return !!(node.branch?.isFavorite ?? node.tag?.isFavorite);
+  }
+  return node.children.some(containsFavorite);
+}
+
 function sortTreeNodes(nodes: TreeNode[]): void {
   nodes.sort((a, b) => {
+    const aFavorite = containsFavorite(a);
+    const bFavorite = containsFavorite(b);
+    if (aFavorite !== bFavorite) return aFavorite ? -1 : 1;
     // Current branch (or folder containing it) always comes first.
     const aCurrent = a.isLeaf
       ? !!a.branch?.isCurrent
@@ -227,21 +247,13 @@ function branchesToTree(branches: BranchInfo[]): TreeNode[] {
 }
 
 function branchesToFlatTree(branches: BranchInfo[]): TreeNode[] {
-  const nodes: TreeNode[] = branches.map((b) => ({
+  return [...branches].sort(compareFavoriteRefs).map((b) => ({
     name: b.name,
     fullPath: b.name,
     children: [],
     branch: b,
     isLeaf: true,
   }));
-  // Sort: current branch first, then alphabetical
-  nodes.sort((a, b) => {
-    const aCurrent = !!a.branch?.isCurrent;
-    const bCurrent = !!b.branch?.isCurrent;
-    if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-  });
-  return nodes;
 }
 
 function tagsToTree(tags: TagInfo[]): TreeNode[] {
@@ -254,7 +266,7 @@ function tagsToTree(tags: TagInfo[]): TreeNode[] {
 }
 
 function tagsToFlatTree(tags: TagInfo[]): TreeNode[] {
-  return tags.map((t) => ({
+  return [...tags].sort(compareFavoriteRefs).map((t) => ({
     name: t.name,
     fullPath: t.name,
     children: [],
@@ -267,20 +279,22 @@ function tagsToFlatTree(tags: TagInfo[]): TreeNode[] {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function collectVisibleLeaves(
+function collectVisibleRefs(
   nodes: TreeNode[],
   collapsed: Record<string, boolean>,
   groupPrefix: string,
-): string[] {
-  const result: string[] = [];
+): GitRefIdentity[] {
+  const result: GitRefIdentity[] = [];
   for (const node of nodes) {
     if (node.isLeaf && node.branch) {
-      result.push(node.branch.name);
+      result.push(branchIdentity(node.branch));
+    } else if (node.isLeaf && node.tag) {
+      result.push(tagIdentity(node.tag));
     } else {
       const collapseKey = `${groupPrefix}:${node.fullPath}`;
       if (!collapsed[collapseKey]) {
         result.push(
-          ...collectVisibleLeaves(node.children, collapsed, groupPrefix),
+          ...collectVisibleRefs(node.children, collapsed, groupPrefix),
         );
       }
     }
@@ -304,8 +318,12 @@ export function BranchTree({
   const currentBranch = usePanelStore((s) => s.currentBranch);
   const filter = usePanelStore((s) => s.filter);
   const setFilter = usePanelStore((s) => s.setFilter);
-  const selectedBranches = usePanelStore((s) => s.selectedBranches);
-  const selectBranch = usePanelStore((s) => s.selectBranch);
+  const selectedRefs = usePanelStore((s) => s.selectedRefs);
+  const selectRef = usePanelStore((s) => s.selectRef);
+  const setFavorite = usePanelStore((s) => s.setFavorite);
+  const navigateToRef = usePanelStore((s) => s.navigateToRef);
+  const showTags = usePanelStore((s) => s.showTags);
+  const singleClickAction = usePanelStore((s) => s.singleClickAction);
   const branchGroupByDirectory = usePanelStore((s) => s.branchGroupByDirectory);
 
   const containerRef = usePreventSelect();
@@ -320,6 +338,11 @@ export function BranchTree({
     x: number;
     y: number;
     branch: BranchInfo;
+  } | null>(null);
+  const [tagContextMenu, setTagContextMenu] = useState<{
+    x: number;
+    y: number;
+    tag: TagInfo;
   } | null>(null);
 
   // Create branch dialog state
@@ -391,17 +414,7 @@ export function BranchTree({
   const localTreeRaw = branchGroupByDirectory
     ? branchesToTree(localBranches)
     : branchesToFlatTree(localBranches);
-  // Move the current branch (or folder containing it) to the top
-  const localTree = (() => {
-    const idx = localTreeRaw.findIndex((node) =>
-      node.isLeaf ? node.branch?.isCurrent : containsCurrentBranch(node),
-    );
-    if (idx > 0) {
-      const [current] = localTreeRaw.splice(idx, 1);
-      localTreeRaw.unshift(current);
-    }
-    return localTreeRaw;
-  })();
+  const localTree = localTreeRaw;
   const remoteTree = branchGroupByDirectory
     ? branchesToTree(remoteBranches)
     : branchesToFlatTree(remoteBranches);
@@ -413,30 +426,70 @@ export function BranchTree({
     ? tagsToTree(filteredTags)
     : tagsToFlatTree(filteredTags);
 
-  const allVisibleBranches: string[] = [
+  const allVisibleRefs: GitRefIdentity[] = [
     ...(!collapsed.local
-      ? collectVisibleLeaves(localTree, collapsed, "local")
+      ? collectVisibleRefs(localTree, collapsed, "local")
       : []),
     ...(!collapsed.remote
-      ? collectVisibleLeaves(remoteTree, collapsed, "remote")
+      ? collectVisibleRefs(remoteTree, collapsed, "remote")
+      : []),
+    ...(showTags && !collapsed.tags
+      ? collectVisibleRefs(tagTree, collapsed, "tags")
       : []),
   ];
 
-  const handleClick = useModifierClickSelection<string>(
-    (branchName, mode) => {
-      selectBranch(branchName, mode, allVisibleBranches);
+  const handleTagContextMenu = (event: React.MouseEvent, tag: TagInfo) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const ref = tagIdentity(tag);
+    selectRef(ref, "single", allVisibleRefs);
+    setTagContextMenu({ x: event.clientX, y: event.clientY, tag });
+  };
+
+  const handleSelectionClick = useModifierClickSelection<GitRefIdentity>(
+    (ref, mode) => {
+      selectRef(ref, mode, allVisibleRefs);
+      if (mode !== "single") return;
+      if (singleClickAction === "filter") {
+        setFilter({ branch: filter.branch === ref.fullRef ? "" : ref.fullRef });
+        return;
+      }
+      const branch = branches.find(
+        (candidate) => refKey(branchIdentity(candidate)) === refKey(ref),
+      );
+      const tag = tags.find(
+        (candidate) => refKey(tagIdentity(candidate)) === refKey(ref),
+      );
+      const targetHash = branch?.lastCommitHash ?? tag?.targetCommitHash;
+      if (targetHash) void navigateToRef(ref, targetHash);
     },
     () => setCurrentBranchRowSelected(false),
   );
 
-  const handleBranchDoubleClick = (name: string) => {
-    setCurrentBranchRowSelected(false);
-    if (filter.branch === name) {
-      setFilter({ branch: "" });
-    } else {
-      setFilter({ branch: name });
-    }
+  const handleRefClick = (event: React.MouseEvent, ref: GitRefIdentity) => {
+    if (event.detail > 1) return;
+    handleSelectionClick(event, ref);
   };
+
+  const handleRefDoubleClick = (_ref: GitRefIdentity) => {
+    setCurrentBranchRowSelected(false);
+  };
+
+  const handleFavorite = useCallback(
+    async (ref: GitRefIdentity, favorite: boolean) => {
+      try {
+        await setFavorite(ref, favorite);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await bridge.request(
+          "showErrorNotification",
+          { message: `Could not update favorite: ${message}` },
+          { scope: "global" },
+        );
+      }
+    },
+    [setFavorite],
+  );
 
   return (
     <div
@@ -566,7 +619,7 @@ export function BranchTree({
             }}
             onDoubleClick={() => {
               if (headBranch) {
-                handleBranchDoubleClick(headBranch.name);
+                handleRefDoubleClick(branchIdentity(headBranch));
               }
             }}
             style={{
@@ -598,10 +651,11 @@ export function BranchTree({
               depth={0}
               groupPrefix="local"
               currentBranch={currentBranch}
-              selectedBranches={selectedBranches}
+              selectedRefKeys={new Set(selectedRefs.map(refKey))}
               filteredBranch={filter.branch}
-              onBranchClick={handleClick}
-              onBranchDoubleClick={handleBranchDoubleClick}
+              onRefClick={handleRefClick}
+              onRefDoubleClick={handleRefDoubleClick}
+              onFavorite={handleFavorite}
               onBranchContextMenu={handleContextMenu}
               collapsed={collapsed}
               onToggle={toggle}
@@ -622,10 +676,11 @@ export function BranchTree({
               depth={0}
               groupPrefix="remote"
               currentBranch={currentBranch}
-              selectedBranches={selectedBranches}
+              selectedRefKeys={new Set(selectedRefs.map(refKey))}
               filteredBranch={filter.branch}
-              onBranchClick={handleClick}
-              onBranchDoubleClick={handleBranchDoubleClick}
+              onRefClick={handleRefClick}
+              onRefDoubleClick={handleRefDoubleClick}
+              onFavorite={handleFavorite}
               onBranchContextMenu={handleContextMenu}
               collapsed={collapsed}
               onToggle={toggle}
@@ -634,22 +689,30 @@ export function BranchTree({
         </GroupSection>
 
         {/* Tags */}
-        <GroupSection
-          title="Tags"
-          collapsed={collapsed.tags}
-          onToggle={() => toggle("tags")}
-        >
-          {tagTree.map((node) => (
-            <TagTreeNodeView
-              key={node.fullPath}
-              node={node}
-              depth={0}
-              groupPrefix="tags"
-              collapsed={collapsed}
-              onToggle={toggle}
-            />
-          ))}
-        </GroupSection>
+        {showTags && (
+          <GroupSection
+            title="Tags"
+            collapsed={collapsed.tags}
+            onToggle={() => toggle("tags")}
+          >
+            {tagTree.map((node) => (
+              <TagTreeNodeView
+                key={node.fullPath}
+                node={node}
+                depth={0}
+                groupPrefix="tags"
+                selectedRefKeys={new Set(selectedRefs.map(refKey))}
+                filteredBranch={filter.branch}
+                onRefClick={handleRefClick}
+                onRefDoubleClick={handleRefDoubleClick}
+                onFavorite={handleFavorite}
+                onTagContextMenu={handleTagContextMenu}
+                collapsed={collapsed}
+                onToggle={toggle}
+              />
+            ))}
+          </GroupSection>
+        )}
 
         {/* Context Menu */}
         {contextMenu &&
@@ -667,6 +730,22 @@ export function BranchTree({
               onPush={(branchName) => {
                 closeContextMenu();
                 setPushDialog({ branchName });
+              }}
+            />,
+            document.body,
+          )}
+        {tagContextMenu &&
+          createPortal(
+            <RefFavoriteContextMenu
+              x={tagContextMenu.x}
+              y={tagContextMenu.y}
+              name={tagContextMenu.tag.name}
+              isFavorite={tagContextMenu.tag.isFavorite}
+              onClose={() => setTagContextMenu(null)}
+              onToggle={() => {
+                const tag = tagContextMenu.tag;
+                setTagContextMenu(null);
+                void handleFavorite(tagIdentity(tag), !tag.isFavorite);
               }}
             />,
             document.body,
@@ -737,10 +816,11 @@ function TreeNodeView({
   depth,
   groupPrefix,
   currentBranch,
-  selectedBranches,
+  selectedRefKeys,
   filteredBranch,
-  onBranchClick,
-  onBranchDoubleClick,
+  onRefClick,
+  onRefDoubleClick,
+  onFavorite,
   onBranchContextMenu,
   collapsed,
   onToggle,
@@ -749,10 +829,11 @@ function TreeNodeView({
   depth: number;
   groupPrefix: string;
   currentBranch: string;
-  selectedBranches: string[];
+  selectedRefKeys: Set<string>;
   filteredBranch: string;
-  onBranchClick: (e: React.MouseEvent, name: string) => void;
-  onBranchDoubleClick: (name: string) => void;
+  onRefClick: (e: React.MouseEvent, ref: GitRefIdentity) => void;
+  onRefDoubleClick: (ref: GitRefIdentity) => void;
+  onFavorite: (ref: GitRefIdentity, favorite: boolean) => void;
   onBranchContextMenu: (e: React.MouseEvent, branch: BranchInfo) => void;
   collapsed: Record<string, boolean>;
   onToggle: (key: string) => void;
@@ -762,6 +843,7 @@ function TreeNodeView({
   const branch = node.branch;
   if (node.isLeaf && branch) {
     const isCurrent = branch.name === currentBranch;
+    const ref = branchIdentity(branch);
     return (
       <BranchItem
         icon={
@@ -777,10 +859,12 @@ function TreeNodeView({
         }
         name={node.name}
         isCurrent={isCurrent}
-        isSelected={selectedBranches.includes(branch.name)}
-        isFiltered={filteredBranch === branch.name}
-        onClick={(e) => onBranchClick(e, branch.name)}
-        onDoubleClick={() => onBranchDoubleClick(branch.name)}
+        isSelected={selectedRefKeys.has(refKey(ref))}
+        isFiltered={filteredBranch === branch.fullRef}
+        isFavorite={branch.isFavorite}
+        onClick={(e) => onRefClick(e, ref)}
+        onDoubleClick={() => onRefDoubleClick(ref)}
+        onFavorite={() => onFavorite(ref, !branch.isFavorite)}
         onContextMenu={(e) => onBranchContextMenu(e, branch)}
         depth={depth}
         ahead={branch.ahead}
@@ -818,10 +902,11 @@ function TreeNodeView({
             depth={depth + 1}
             groupPrefix={groupPrefix}
             currentBranch={currentBranch}
-            selectedBranches={selectedBranches}
+            selectedRefKeys={selectedRefKeys}
             filteredBranch={filteredBranch}
-            onBranchClick={onBranchClick}
-            onBranchDoubleClick={onBranchDoubleClick}
+            onRefClick={onRefClick}
+            onRefDoubleClick={onRefDoubleClick}
+            onFavorite={onFavorite}
             onBranchContextMenu={onBranchContextMenu}
             collapsed={collapsed}
             onToggle={onToggle}
@@ -839,32 +924,46 @@ function TagTreeNodeView({
   node,
   depth,
   groupPrefix,
+  selectedRefKeys,
+  filteredBranch,
+  onRefClick,
+  onRefDoubleClick,
+  onFavorite,
+  onTagContextMenu,
   collapsed,
   onToggle,
 }: {
   node: TreeNode;
   depth: number;
   groupPrefix: string;
+  selectedRefKeys: Set<string>;
+  filteredBranch: string;
+  onRefClick: (e: React.MouseEvent, ref: GitRefIdentity) => void;
+  onRefDoubleClick: (ref: GitRefIdentity) => void;
+  onFavorite: (ref: GitRefIdentity, favorite: boolean) => void;
+  onTagContextMenu: (event: React.MouseEvent, tag: TagInfo) => void;
   collapsed: Record<string, boolean>;
   onToggle: (key: string) => void;
 }) {
   const collapseKey = `${groupPrefix}:${node.fullPath}`;
 
-  if (node.isLeaf) {
+  if (node.isLeaf && node.tag) {
+    const tag = node.tag;
+    const ref = tagIdentity(tag);
     return (
-      <div
-        style={{
-          padding: `4px 8px 4px ${20 + depth * 12}px`,
-          cursor: "default",
-          color: "var(--description-fg)",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-        }}
-      >
-        <IconTagOutline style={{ color: "var(--description-fg)" }} />
-        {node.name}
-      </div>
+      <BranchItem
+        icon={<IconTagOutline style={{ color: "var(--description-fg)" }} />}
+        name={node.name}
+        isCurrent={false}
+        isSelected={selectedRefKeys.has(refKey(ref))}
+        isFiltered={filteredBranch === ref.fullRef}
+        isFavorite={tag.isFavorite}
+        onClick={(event) => onRefClick(event, ref)}
+        onDoubleClick={() => onRefDoubleClick(ref)}
+        onContextMenu={(event) => onTagContextMenu(event, tag)}
+        onFavorite={() => onFavorite(ref, !tag.isFavorite)}
+        depth={depth}
+      />
     );
   }
 
@@ -895,10 +994,65 @@ function TagTreeNodeView({
             node={child}
             depth={depth + 1}
             groupPrefix={groupPrefix}
+            selectedRefKeys={selectedRefKeys}
+            filteredBranch={filteredBranch}
+            onRefClick={onRefClick}
+            onRefDoubleClick={onRefDoubleClick}
+            onFavorite={onFavorite}
+            onTagContextMenu={onTagContextMenu}
             collapsed={collapsed}
             onToggle={onToggle}
           />
         ))}
+    </div>
+  );
+}
+
+function RefFavoriteContextMenu({
+  x,
+  y,
+  name,
+  isFavorite,
+  onToggle,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  name: string;
+  isFavorite: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", closeOutside, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      className="commit-context-menu"
+      aria-label={`Actions for ${name}`}
+      style={{ position: "fixed", left: x, top: y, zIndex: 1000 }}
+    >
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={onToggle}
+      >
+        {isFavorite ? "Unmark as Favorite" : "Mark as Favorite"}
+      </button>
     </div>
   );
 }
@@ -946,9 +1100,11 @@ function BranchItem({
   isCurrent,
   isSelected,
   isFiltered,
+  isFavorite,
   onClick,
   onDoubleClick,
   onContextMenu,
+  onFavorite,
   depth,
   ahead = 0,
   behind = 0,
@@ -958,9 +1114,11 @@ function BranchItem({
   isCurrent: boolean;
   isSelected: boolean;
   isFiltered: boolean;
+  isFavorite: boolean;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onFavorite: () => void;
   depth: number;
   ahead?: number;
   behind?: number;
@@ -986,6 +1144,28 @@ function BranchItem({
       }}
     >
       <span style={{ flexShrink: 0 }}>{icon}</span>
+      <button
+        type="button"
+        aria-label={`${isFavorite ? "Unmark" : "Mark"} ${name} as favorite`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onFavorite();
+        }}
+        style={{
+          border: 0,
+          padding: 0,
+          background: "transparent",
+          color: isFavorite
+            ? "var(--vscode-symbolIcon-colorForeground, #d4a017)"
+            : "var(--description-fg)",
+          opacity: isFavorite ? 1 : 0.45,
+          cursor: "pointer",
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+      >
+        {isFavorite ? "★" : "☆"}
+      </button>
       <Tooltip text={name}>
         <span
           style={{
@@ -1048,6 +1228,7 @@ function BranchContextMenu({
   onCreateBranch: (startPoint: string, defaultName: string) => void;
   onPush: (branchName: string) => void;
 }) {
+  const setFavorite = usePanelStore((state) => state.setFavorite);
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     top: number;
@@ -1222,9 +1403,28 @@ function BranchContextMenu({
   const handleUpdate = async () => {
     onClose();
     try {
-      await bridgeWithProgress("pullBranch", { branchName: branch.name });
+      await bridgeWithProgress("updateBranch", { branchName: branch.name });
     } catch (err) {
-      console.error("Update failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      await bridge.request(
+        "showErrorNotification",
+        { message: `Update failed: ${message}` },
+        { scope: "global" },
+      );
+    }
+  };
+
+  const handleFavorite = async () => {
+    onClose();
+    try {
+      await setFavorite(branchIdentity(branch), !branch.isFavorite);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await bridge.request(
+        "showErrorNotification",
+        { message: `Could not update favorite: ${message}` },
+        { scope: "global" },
+      );
     }
   };
 
@@ -1274,6 +1474,12 @@ function BranchContextMenu({
     disabled?: boolean;
     separator?: boolean;
   }[] = [];
+
+  items.push({
+    label: branch.isFavorite ? "Unmark as Favorite" : "Mark as Favorite",
+    action: handleFavorite,
+  });
+  items.push({ label: "", action: () => {}, separator: true });
 
   if (!isCurrent) {
     items.push({ label: "Checkout", action: handleCheckout });

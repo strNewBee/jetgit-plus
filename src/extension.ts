@@ -1,5 +1,9 @@
 import * as nodefs from "node:fs/promises";
 import * as vscode from "vscode";
+import {
+  BranchDashboardStateStore,
+  type GitRefIdentity,
+} from "./git/branchDashboardState";
 import { JetGitError, JetGitErrorCode } from "./git/errors";
 import { GitService } from "./git/gitService";
 import { discoverRepos } from "./git/repoDiscovery";
@@ -77,6 +81,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 2b. Repo registry built from validated workspace folders
   const repoRegistry = new RepoRegistry();
+  const branchDashboardState = new BranchDashboardStateStore(
+    context.workspaceState,
+  );
   const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => ({
     fsPath: f.uri.fsPath,
     name: f.name,
@@ -435,7 +442,15 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return ctx.gitService.getBranches();
+    const branches = await ctx.gitService.getBranches();
+    return branches.map((branch) => ({
+      ...branch,
+      isFavorite: branchDashboardState.isFavorite(
+        ctx.repoId,
+        branch.isRemote ? "remote" : "local",
+        branch.name,
+      ),
+    }));
   });
 
   messageRouter.handle("getRemoteBranches", async (_params, ctx) => {
@@ -451,7 +466,11 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!ctx) {
       return NOT_GIT_REPO;
     }
-    return ctx.gitService.getTags();
+    const tags = await ctx.gitService.getTags();
+    return tags.map((tag) => ({
+      ...tag,
+      isFavorite: branchDashboardState.isFavorite(ctx.repoId, "tag", tag.name),
+    }));
   });
 
   messageRouter.handle("getDiff", async (params, ctx) => {
@@ -920,12 +939,30 @@ export async function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  messageRouter.handle("pullBranch", async (params, ctx) => {
+  messageRouter.handle("pullBranch", async (_params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
-    const branchName = params.branchName as string | undefined;
     return withProgress(messageRouter, ctx.repoId, async () => {
-      await gitService.pull(branchName);
+      await gitService.pull();
+      messageRouter.broadcastEvent("gitStateChanged", {
+        scope: "all",
+        repoId: ctx.repoId,
+      });
+      return { success: true };
+    });
+  });
+
+  messageRouter.handle("updateBranch", async (params, ctx) => {
+    if (!ctx) return NOT_GIT_REPO;
+    const branchName = params.branchName as string;
+    if (!branchName) {
+      throw new JetGitError(
+        JetGitErrorCode.BRANCH_NOT_FOUND,
+        "No local branch was selected",
+      );
+    }
+    return withProgress(messageRouter, ctx.repoId, async () => {
+      await ctx.gitService.updateBranch(branchName);
       messageRouter.broadcastEvent("gitStateChanged", {
         scope: "all",
         repoId: ctx.repoId,
@@ -1745,15 +1782,6 @@ export async function activate(context: vscode.ExtensionContext) {
     });
   });
 
-  messageRouter.handle("showMyBranches", async (_params, ctx) => {
-    // Filter branches by current git user
-    if (!ctx) return NOT_GIT_REPO;
-    void vscode.window.showInformationMessage(
-      "Show My Branches: filter applied in branch tree",
-    );
-    return { success: true };
-  });
-
   messageRouter.handle("fetchAll", async (_params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
     const { gitService } = ctx;
@@ -1768,42 +1796,46 @@ export async function activate(context: vscode.ExtensionContext) {
     });
   });
 
-  messageRouter.handle("toggleFavorite", async (params, ctx) => {
+  messageRouter.handle("setFavorite", async (params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
-    const branchName = params.branchName as string;
-    // Favorites are a UI-only concept, handled in webview state
-    void vscode.window.showInformationMessage(
-      `Toggled favorite: ${branchName}`,
+    const ref = params.ref as GitRefIdentity | undefined;
+    const favorite = params.favorite as boolean | undefined;
+    if (
+      !ref ||
+      !["local", "remote", "tag"].includes(ref.type) ||
+      !ref.name ||
+      typeof favorite !== "boolean"
+    ) {
+      throw new Error("Invalid favorite ref");
+    }
+    const isFavorite = await branchDashboardState.setFavorite(
+      ctx.repoId,
+      ref.type,
+      ref.name,
+      favorite,
     );
-    return { success: true };
+    return { ref, isFavorite };
   });
 
-  messageRouter.handle("navigateToHead", async (params, ctx) => {
-    if (!ctx) return NOT_GIT_REPO;
-    const branchName = params.branchName as string;
-    if (!branchName) return { success: false };
-    // Broadcast event to scroll git log to this branch's head commit
-    messageRouter.broadcastEvent("gitStateChanged", {
-      scope: "navigateToHead",
-      branch: branchName,
-      repoId: ctx.repoId,
-    });
-    return { success: true };
-  });
+  messageRouter.handle("getBranchDashboardPreferences", async () =>
+    branchDashboardState.getPreferences(),
+  );
 
-  messageRouter.handle("toggleBranchGroupByDirectory", async () => {
-    // This is a UI-only toggle, handled in webview state
-    return { success: true };
-  });
-
-  messageRouter.handle("setSingleClickAction", async () => {
-    // UI preference, handled in webview state
-    return { success: true };
-  });
-
-  messageRouter.handle("toggleShowTags", async () => {
-    // UI preference, handled in webview state
-    return { success: true };
+  messageRouter.handle("setBranchDashboardPreferences", async (params) => {
+    const patch: {
+      showTags?: boolean;
+      singleClickAction?: "filter" | "navigate";
+    } = {};
+    if (typeof params.showTags === "boolean") {
+      patch.showTags = params.showTags;
+    }
+    if (
+      params.singleClickAction === "filter" ||
+      params.singleClickAction === "navigate"
+    ) {
+      patch.singleClickAction = params.singleClickAction;
+    }
+    return branchDashboardState.updatePreferences(patch);
   });
 
   // 6b. Repo registry commands & dynamic workspace folder handling

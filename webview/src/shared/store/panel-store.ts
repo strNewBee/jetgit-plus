@@ -5,6 +5,7 @@ import type {
   BranchInfo,
   Commit,
   DiffFile,
+  GitRefIdentity,
   LaneInfo,
   LaneSnapshot,
   TagInfo,
@@ -40,9 +41,12 @@ interface PanelStore {
   /** When multiple commits are selected, stores the oldest/newest for range diff */
   rangeOldest: string | null;
   rangeNewest: string | null;
-  selectedBranches: string[];
-  lastSelectedBranch: string | null;
+  selectedRefs: GitRefIdentity[];
+  lastSelectedRefKey: string | null;
   branchGroupByDirectory: boolean;
+  showTags: boolean;
+  singleClickAction: "filter" | "navigate";
+  scrollTargetHash: string | null;
 
   filter: PanelFilter;
   /** Hashes to restore after clearing a filter */
@@ -66,11 +70,19 @@ interface PanelStore {
   selectFile: (filePath: string) => void;
   openDiffEditor: (commitHash: string, file: DiffFile) => Promise<void>;
   setFilter: (filter: Partial<PanelFilter>) => void;
-  selectBranch: (
-    name: string,
+  selectRef: (
+    ref: GitRefIdentity,
     mode: "single" | "toggle" | "range",
-    allVisibleBranches: string[],
+    allVisibleRefs: GitRefIdentity[],
   ) => void;
+  setFavorite: (ref: GitRefIdentity, favorite: boolean) => Promise<void>;
+  loadBranchDashboardPreferences: () => Promise<void>;
+  setBranchDashboardPreferences: (patch: {
+    showTags?: boolean;
+    singleClickAction?: "filter" | "navigate";
+  }) => Promise<void>;
+  navigateToRef: (ref: GitRefIdentity, targetHash: string) => Promise<void>;
+  clearScrollTarget: () => void;
   setHoveredColumn: (column: number | null) => void;
   toggleColumnVisibility: (column: "author" | "date" | "hash") => void;
   toggleSequenceCollapse: (sequenceId: string, intermediates: string[]) => void;
@@ -223,8 +235,9 @@ function _clearRepoBoundDisplay() {
     selectedCommitHash: null,
     selectedCommitHashes: [] as string[],
     lastSelectedCommitHash: null,
-    selectedBranches: [] as string[],
-    lastSelectedBranch: null as string | null,
+    selectedRefs: [] as GitRefIdentity[],
+    lastSelectedRefKey: null as string | null,
+    scrollTargetHash: null as string | null,
     commitFiles: [] as DiffFile[],
     selectedFilePath: null,
     rangeOldest: null,
@@ -253,8 +266,11 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   visibleColumns: { author: true, date: true, hash: true },
   rangeOldest: null,
   rangeNewest: null,
-  selectedBranches: [],
-  lastSelectedBranch: null,
+  selectedRefs: [],
+  lastSelectedRefKey: null,
+  showTags: true,
+  singleClickAction: "filter",
+  scrollTargetHash: null,
   branchGroupByDirectory: (() => {
     try {
       return localStorage.getItem("branchGroupByDirectory") === "true";
@@ -561,40 +577,118 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     }
   },
 
-  selectBranch(
-    name: string,
-    mode: "single" | "toggle" | "range",
-    allVisibleBranches: string[],
-  ) {
+  selectRef(ref, mode, allVisibleRefs) {
+    const keyOf = (candidate: GitRefIdentity) =>
+      `${candidate.type}\0${candidate.name}`;
+    const targetKey = keyOf(ref);
+    const { selectedRefs, lastSelectedRefKey } = get();
+
     if (mode === "single") {
-      set({ selectedBranches: [name], lastSelectedBranch: name });
-    } else if (mode === "toggle") {
-      const current = get().selectedBranches;
-      if (current.includes(name)) {
-        set({
-          selectedBranches: current.filter((b) => b !== name),
-          lastSelectedBranch: name,
-        });
-      } else {
-        set({ selectedBranches: [...current, name], lastSelectedBranch: name });
-      }
-    } else {
-      // range
-      const anchor = get().lastSelectedBranch;
-      if (!anchor) {
-        set({ selectedBranches: [name], lastSelectedBranch: name });
-        return;
-      }
-      const anchorIdx = allVisibleBranches.indexOf(anchor);
-      const targetIdx = allVisibleBranches.indexOf(name);
-      if (anchorIdx === -1 || targetIdx === -1) {
-        set({ selectedBranches: [name], lastSelectedBranch: name });
-        return;
-      }
-      const start = Math.min(anchorIdx, targetIdx);
-      const end = Math.max(anchorIdx, targetIdx);
-      set({ selectedBranches: allVisibleBranches.slice(start, end + 1) });
+      set({ selectedRefs: [ref], lastSelectedRefKey: targetKey });
+      return;
     }
+
+    if (mode === "toggle") {
+      const isSelected = selectedRefs.some(
+        (candidate) => keyOf(candidate) === targetKey,
+      );
+      set({
+        selectedRefs: isSelected
+          ? selectedRefs.filter((candidate) => keyOf(candidate) !== targetKey)
+          : [...selectedRefs, ref],
+        lastSelectedRefKey: targetKey,
+      });
+      return;
+    }
+
+    const anchorIndex = allVisibleRefs.findIndex(
+      (candidate) => keyOf(candidate) === lastSelectedRefKey,
+    );
+    const targetIndex = allVisibleRefs.findIndex(
+      (candidate) => keyOf(candidate) === targetKey,
+    );
+    if (anchorIndex === -1 || targetIndex === -1) {
+      set({ selectedRefs: [ref], lastSelectedRefKey: targetKey });
+      return;
+    }
+
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    set({ selectedRefs: allVisibleRefs.slice(start, end + 1) });
+  },
+
+  async setFavorite(ref, favorite) {
+    await bridge.request("setFavorite", { ref, favorite });
+    set((state) => ({
+      branches: state.branches.map((branch) => {
+        const type = branch.isRemote ? "remote" : "local";
+        return type === ref.type && branch.name === ref.name
+          ? { ...branch, isFavorite: favorite }
+          : branch;
+      }),
+      tags: state.tags.map((tag) =>
+        ref.type === "tag" && tag.name === ref.name
+          ? { ...tag, isFavorite: favorite }
+          : tag,
+      ),
+    }));
+  },
+
+  async loadBranchDashboardPreferences() {
+    const preferences = (await bridge.request(
+      "getBranchDashboardPreferences",
+      {},
+      { scope: "global" },
+    )) as {
+      showTags: boolean;
+      singleClickAction: "filter" | "navigate";
+    } | null;
+    if (preferences) set(preferences);
+  },
+
+  async setBranchDashboardPreferences(patch) {
+    const preferences = (await bridge.request(
+      "setBranchDashboardPreferences",
+      patch,
+      { scope: "global" },
+    )) as {
+      showTags: boolean;
+      singleClickAction: "filter" | "navigate";
+    } | null;
+    if (preferences) set(preferences);
+  },
+
+  async navigateToRef(ref, targetHash) {
+    let visibleHashes = get().visibleCommits.map((commit) => commit.hash);
+    let pagesLoaded = 0;
+    while (
+      !visibleHashes.includes(targetHash) &&
+      get().hasMore &&
+      !get().loading &&
+      pagesLoaded < 50
+    ) {
+      const previousCount = get().commits.length;
+      await get().loadMore();
+      pagesLoaded += 1;
+      visibleHashes = get().visibleCommits.map((commit) => commit.hash);
+      if (get().commits.length === previousCount) break;
+    }
+    if (!visibleHashes.includes(targetHash)) {
+      await bridge.request(
+        "showErrorNotification",
+        {
+          message: `Could not find ${ref.name} (${targetHash.slice(0, 8)}) in the loaded log.`,
+        },
+        { scope: "global" },
+      );
+      return;
+    }
+    await get().selectCommit(targetHash, "single", visibleHashes);
+    set({ scrollTargetHash: targetHash });
+  },
+
+  clearScrollTarget() {
+    set({ scrollTargetHash: null });
   },
 
   setHoveredColumn(column: number | null) {

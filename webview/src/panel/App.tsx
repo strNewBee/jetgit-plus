@@ -50,6 +50,9 @@ export function PanelApp() {
   const loading = usePanelStore((s) => s.loading);
   const operationInProgress = usePanelStore((s) => s.operationInProgress);
   const fetchInitialData = usePanelStore((s) => s.fetchInitialData);
+  const loadBranchDashboardPreferences = usePanelStore(
+    (s) => s.loadBranchDashboardPreferences,
+  );
   const repos = useRepoStore((s) => s.repos);
 
   const [showLeft, setShowLeft] = useState(true);
@@ -108,7 +111,12 @@ export function PanelApp() {
       }
     });
     void (async () => {
-      await useRepoStore.getState().load();
+      await Promise.all([
+        useRepoStore.getState().load(),
+        loadBranchDashboardPreferences().catch((error) => {
+          console.error("Failed to load branch dashboard preferences:", error);
+        }),
+      ]);
       if (disposed) return;
       bootstrapping = false;
       lastRepo = useRepoStore.getState().activeRepoId;
@@ -118,7 +126,7 @@ export function PanelApp() {
       disposed = true;
       unsub();
     };
-  }, [fetchInitialData]);
+  }, [fetchInitialData, loadBranchDashboardPreferences]);
 
   return (
     <div

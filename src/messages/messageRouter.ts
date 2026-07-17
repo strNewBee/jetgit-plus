@@ -26,9 +26,8 @@ const REPO_AGNOSTIC_COMMANDS = new Set<CommandType>([
   "showErrorNotification",
   "showInfoNotification",
   "copyToClipboard",
-  "toggleBranchGroupByDirectory",
-  "setSingleClickAction",
-  "toggleShowTags",
+  "getBranchDashboardPreferences",
+  "setBranchDashboardPreferences",
   "getRepos",
   "selectRepo",
   // Closing a webview panel (Push/Rollback) touches no repo and is sent

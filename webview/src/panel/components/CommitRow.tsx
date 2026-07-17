@@ -224,7 +224,7 @@ export function CommitRow({
             overflow: "hidden",
           }}
         >
-          <Tooltip text={commit.subject}>
+          <Tooltip text={commit.subject} onlyWhenTruncated>
             <span
               style={{
                 overflow: "hidden",

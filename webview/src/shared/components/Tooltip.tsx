@@ -2,6 +2,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -12,6 +13,60 @@ interface TooltipProps {
   children: ReactNode;
   delay?: number;
   position?: "top" | "bottom";
+  onlyWhenTruncated?: boolean;
+}
+
+interface TooltipPositionInput {
+  trigger: { top: number; bottom: number; left: number; width: number };
+  tooltip: { width: number; height: number };
+  viewport: { width: number; height: number };
+  preferred: "top" | "bottom";
+}
+
+export function computeTooltipPosition({
+  trigger,
+  tooltip,
+  viewport,
+  preferred,
+}: TooltipPositionInput): {
+  top: number;
+  left: number;
+  position: "top" | "bottom";
+} {
+  const gap = 4;
+  const margin = 4;
+  const fitsAbove = trigger.top - gap - tooltip.height >= margin;
+  const fitsBelow =
+    trigger.bottom + gap + tooltip.height <= viewport.height - margin;
+  let position = preferred;
+  if (preferred === "top" && !fitsAbove && fitsBelow) position = "bottom";
+  if (preferred === "bottom" && !fitsBelow && fitsAbove) position = "top";
+
+  const halfWidth = tooltip.width / 2;
+  const minCenter = margin + halfWidth;
+  const maxCenter = viewport.width - margin - halfWidth;
+  const desiredCenter = trigger.left + trigger.width / 2;
+  const left =
+    minCenter > maxCenter
+      ? viewport.width / 2
+      : Math.min(maxCenter, Math.max(minCenter, desiredCenter));
+
+  return {
+    top: position === "top" ? trigger.top - gap : trigger.bottom + gap,
+    left,
+    position,
+  };
+}
+
+export function isTooltipContentTruncated(container: HTMLElement): boolean {
+  const content = container.firstElementChild as HTMLElement | null;
+  if (content && content.scrollWidth > content.clientWidth) return true;
+  let candidate: HTMLElement | null = container;
+  for (let depth = 0; candidate && depth < 3; depth += 1) {
+    if (candidate.scrollWidth > candidate.clientWidth) return true;
+    candidate = candidate.parentElement;
+  }
+  return false;
 }
 
 export function Tooltip({
@@ -19,6 +74,7 @@ export function Tooltip({
   children,
   delay = 300,
   position = "top",
+  onlyWhenTruncated = false,
 }: TooltipProps) {
   const [visible, setVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(
@@ -30,8 +86,12 @@ export function Tooltip({
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const show = useCallback(() => {
+    if (onlyWhenTruncated) {
+      const container = containerRef.current;
+      if (!container || !isTooltipContentTruncated(container)) return;
+    }
     timerRef.current = setTimeout(() => setVisible(true), delay);
-  }, [delay]);
+  }, [delay, onlyWhenTruncated]);
 
   const hide = useCallback(() => {
     if (timerRef.current) {
@@ -48,58 +108,41 @@ export function Tooltip({
     };
   }, []);
 
-  // Position the tooltip using fixed positioning relative to viewport
+  // Seed an anchor so the portal can render and be measured.
   useEffect(() => {
     if (!visible || !containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    const gap = 4;
-
-    let top: number;
-    let actualPosition = position;
-
-    // If position is "top" but there's not enough space above, flip to bottom
-    if (position === "top" && rect.top < 30) {
-      actualPosition = "bottom";
-    }
-
-    if (actualPosition === "top") {
-      top = rect.top - gap;
-    } else {
-      top = rect.bottom + gap;
-    }
-
-    // Center horizontally on the trigger element
-    const left = rect.left + rect.width / 2;
-
-    setCoords({ top, left });
-    setActualPosition(actualPosition);
+    setCoords({
+      top: position === "top" ? rect.top - 4 : rect.bottom + 4,
+      left: rect.left + rect.width / 2,
+    });
+    setActualPosition(position);
   }, [visible, position]);
 
-  // Adjust if tooltip overflows viewport
-  useEffect(() => {
+  // Measure once and derive the final clamped position from immutable geometry.
+  // This avoids the old feedback loop where shifting left could cause the next
+  // render to overflow the opposite edge and shift right again.
+  useLayoutEffect(() => {
     if (!visible || !coords || !tooltipRef.current) return;
-
-    const tooltip = tooltipRef.current;
-    const tooltipRect = tooltip.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-
-    // Check right overflow
-    if (tooltipRect.right > viewportWidth - 4) {
-      const overflow = tooltipRect.right - viewportWidth + 8;
-      setCoords((prev) =>
-        prev ? { ...prev, left: prev.left - overflow } : prev,
-      );
-    }
-
-    // Check left overflow
-    if (tooltipRect.left < 4) {
-      const overflow = 4 - tooltipRect.left;
-      setCoords((prev) =>
-        prev ? { ...prev, left: prev.left + overflow } : prev,
-      );
-    }
-  }, [visible, coords]);
+    const trigger = containerRef.current?.getBoundingClientRect();
+    if (!trigger) return;
+    const tooltip = tooltipRef.current.getBoundingClientRect();
+    const next = computeTooltipPosition({
+      trigger,
+      tooltip,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      preferred: position,
+    });
+    setCoords((previous) =>
+      previous &&
+      Math.abs(previous.top - next.top) < 0.5 &&
+      Math.abs(previous.left - next.left) < 0.5
+        ? previous
+        : { top: next.top, left: next.left },
+    );
+    setActualPosition(next.position);
+  }, [visible, position, coords]);
 
   return (
     <div

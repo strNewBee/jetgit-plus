@@ -47,11 +47,22 @@ export interface GraphLayoutResult {
   snapshot: LaneSnapshot;
 }
 
+export type GitRefType = "local" | "remote" | "tag";
+
+export interface GitRefIdentity {
+  type: GitRefType;
+  name: string;
+  fullRef: string;
+}
+
 export interface BranchInfo {
   name: string;
+  fullRef: string;
   isRemote: boolean;
   isCurrent: boolean;
+  isFavorite: boolean;
   upstream?: string;
+  checkedOutWorktreePath?: string;
   ahead: number;
   behind: number;
   lastCommitHash: string;
@@ -59,7 +70,10 @@ export interface BranchInfo {
 
 export interface TagInfo {
   name: string;
+  fullRef: string;
   hash: string;
+  targetCommitHash: string;
+  isFavorite: boolean;
   isAnnotated: boolean;
   message?: string;
 }

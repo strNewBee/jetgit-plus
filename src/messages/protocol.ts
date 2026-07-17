@@ -75,6 +75,7 @@ export type CommandType =
   | "rebaseBranch"
   | "checkoutAndRebase"
   | "pushBranch"
+  | "updateBranch"
   | "pullBranch"
   | "pullRebase"
   | "pullMerge"
@@ -126,13 +127,10 @@ export type CommandType =
   | "importPatchFromClipboard"
   | "createBranchPrompt"
   | "deleteBranchPrompt"
-  | "showMyBranches"
   | "fetchAll"
-  | "toggleFavorite"
-  | "navigateToHead"
-  | "toggleBranchGroupByDirectory"
-  | "setSingleClickAction"
-  | "toggleShowTags"
+  | "setFavorite"
+  | "getBranchDashboardPreferences"
+  | "setBranchDashboardPreferences"
   | "getAheadCommits"
   | "getCommitRangeFiles"
   | "executePush"
@@ -171,6 +169,10 @@ export enum ErrorCode {
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
   MERGE_CONFLICT = "MERGE_CONFLICT",
   REPO_NOT_FOUND = "REPO_NOT_FOUND",
+  BRANCH_NOT_FOUND = "BRANCH_NOT_FOUND",
+  BRANCH_NO_UPSTREAM = "BRANCH_NO_UPSTREAM",
+  BRANCH_CHECKED_OUT_IN_WORKTREE = "BRANCH_CHECKED_OUT_IN_WORKTREE",
+  BRANCH_NON_FAST_FORWARD = "BRANCH_NON_FAST_FORWARD",
   UNKNOWN = "UNKNOWN",
 }
 

@@ -51,9 +51,11 @@ export interface GraphLayoutResult {
 
 export interface BranchInfo {
   name: string;
+  fullRef: string;
   isRemote: boolean;
   isCurrent: boolean;
   upstream?: string;
+  checkedOutWorktreePath?: string;
   ahead: number;
   behind: number;
   lastCommitHash: string;
@@ -61,7 +63,9 @@ export interface BranchInfo {
 
 export interface TagInfo {
   name: string;
+  fullRef: string;
   hash: string;
+  targetCommitHash: string;
   isAnnotated: boolean;
   message?: string;
 }

@@ -1,5 +1,17 @@
 # Changelog / 更新日志
 
+## [0.5.1] - 2026-07-17
+
+### Added / 新增
+- **Persistent branch and tag favorites** — local branches, remote branches, and tags can be marked/unmarked from the tree, context menu, or sidebar; favorites are stored per workspace and repository and sorted first / 本地分支、远程分支与 Tag 均可通过树、右键菜单或侧栏收藏；收藏状态按 workspace 与仓库持久化并优先排序
+- **Branch dashboard preferences** — "Show Tags" and the single-click action (filter the log or navigate to the ref head) are now functional workspace preferences / “Show Tags” 与单击行为（过滤日志或定位到 ref head）现已成为可持久化的 workspace 偏好
+- **Typed ref selection and navigation** — branch and tag selections no longer collide when names match; navigating to a ref head loads older log pages when necessary and scrolls the virtualized list to the commit / 分支与同名 Tag 的选择不再冲突；定位 ref head 时会按需加载旧日志并滚动到对应提交
+
+### Fixed / 修复
+- **Branch Update semantics** — current branches update from their configured upstream; non-current local branches fast-forward through a safe fetch refspec without switching or modifying the working tree. Missing upstreams, non-fast-forward updates, and branches checked out in another worktree now produce explicit errors / 当前分支从配置的 upstream 更新；非当前本地分支通过安全 fetch refspec 快进，不切换分支也不修改工作区。缺少 upstream、非快进以及被其它 worktree 检出的分支会显示明确错误
+- **Long commit tooltip flicker** — tooltip placement is now deterministic, viewport-clamped, and wrapped; commit-subject tooltips only appear for truncated text / 修复长提交信息悬浮提示来回抖动；定位改为确定性视口夹紧并支持换行，且仅在文本截断时显示
+- **Removed inert branch actions** — removed the non-functional "Show My Branches" entry and replaced placeholder Favorite/Show Tags/single-click handlers with real stateful behavior / 移除无实际效果的 “Show My Branches” 入口，并以真实状态逻辑替换 Favorite、Show Tags 与单击行为占位处理
+
 ## [0.5.0] - 2026-07-15
 
 ### Removed / 移除

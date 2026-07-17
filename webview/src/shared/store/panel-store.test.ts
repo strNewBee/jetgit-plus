@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GitRefIdentity } from "../types/git";
 
 // Capture the event handler registered by panel-store at import time so the
 // test can dispatch events into it. panel-store calls bridge.onEvent(cb) once
@@ -24,6 +25,7 @@ const {
   _endClientOperation,
 } = await import("./panel-store");
 const { useRepoStore } = await import("./repo-store");
+const { bridge } = await import("../bridge");
 
 function emit(event: string, data: unknown): void {
   if (!panelEventHandler) {
@@ -233,8 +235,14 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: "a1",
       selectedCommitHashes: ["a1"],
       lastSelectedCommitHash: "a1",
-      selectedBranches: ["feature-a"],
-      lastSelectedBranch: "feature-a",
+      selectedRefs: [
+        {
+          type: "local",
+          name: "feature-a",
+          fullRef: "refs/heads/feature-a",
+        },
+      ],
+      lastSelectedRefKey: "local\0feature-a",
       commitFiles: [{ path: "a.ts" } as never],
       selectedFilePath: "a.ts",
       rangeOldest: "a1",
@@ -266,8 +274,8 @@ describe("panel-store resetForRepoSwitch", () => {
     expect(s.selectedCommitHash).toBeNull();
     expect(s.selectedCommitHashes).toEqual([]);
     expect(s.lastSelectedCommitHash).toBeNull();
-    expect(s.selectedBranches).toEqual([]);
-    expect(s.lastSelectedBranch).toBeNull();
+    expect(s.selectedRefs).toEqual([]);
+    expect(s.lastSelectedRefKey).toBeNull();
     expect(s.commitFiles).toEqual([]);
     expect(s.selectedFilePath).toBeNull();
     // range cleared
@@ -300,8 +308,14 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: "a1",
       selectedCommitHashes: ["a1"],
       lastSelectedCommitHash: "a1",
-      selectedBranches: ["feature-a"],
-      lastSelectedBranch: "feature-a",
+      selectedRefs: [
+        {
+          type: "local" as const,
+          name: "feature-a",
+          fullRef: "refs/heads/feature-a",
+        },
+      ],
+      lastSelectedRefKey: "local\0feature-a",
       commitFiles: [{ path: "a.ts" } as never],
       selectedFilePath: "a.ts",
       rangeOldest: "a1",
@@ -330,8 +344,8 @@ describe("panel-store resetForRepoSwitch", () => {
       selectedCommitHash: s.selectedCommitHash,
       selectedCommitHashes: s.selectedCommitHashes,
       lastSelectedCommitHash: s.lastSelectedCommitHash,
-      selectedBranches: s.selectedBranches,
-      lastSelectedBranch: s.lastSelectedBranch,
+      selectedRefs: s.selectedRefs,
+      lastSelectedRefKey: s.lastSelectedRefKey,
       commitFiles: s.commitFiles,
       selectedFilePath: s.selectedFilePath,
       rangeOldest: s.rangeOldest,
@@ -344,22 +358,22 @@ describe("panel-store resetForRepoSwitch", () => {
     expect(pick(afterSwitch)).toEqual(pick(afterNull));
   });
 
-  it("clears selectedBranches / lastSelectedBranch on repo switch so wrong-repo branch ops are disabled", () => {
-    // Hazard: BranchSidebar/BoundTree gate Update/Delete/Favorite/Navigate on
-    // selectedBranches[0]. If repo-A's selected branch survives the A→B switch and
-    // repo-B happens to have a same-named branch, the op is routed through the
-    // B-bound bridge onto the wrong repo. Resetting both fields closes that window:
-    // after switch, BranchSidebar has no selected branch, so those actions are
-    // DISABLED until the user selects a branch in repo-B.
+  it("clears selectedRefs / lastSelectedRefKey on repo switch so wrong-repo ref ops are disabled", () => {
     usePanelStore.setState({
-      selectedBranches: ["repo-A-branch"],
-      lastSelectedBranch: "repo-A-branch",
+      selectedRefs: [
+        {
+          type: "local",
+          name: "repo-A-branch",
+          fullRef: "refs/heads/repo-A-branch",
+        },
+      ],
+      lastSelectedRefKey: "local\0repo-A-branch",
       branches: [{ name: "repo-A-branch", isCurrent: true } as never],
     });
     usePanelStore.getState().resetForRepoSwitch();
     const s = usePanelStore.getState();
-    expect(s.selectedBranches).toEqual([]);
-    expect(s.lastSelectedBranch).toBeNull();
+    expect(s.selectedRefs).toEqual([]);
+    expect(s.lastSelectedRefKey).toBeNull();
   });
 
   it("a failed fetchInitialData after reset does NOT resurrect stale repo-A data (F3 fetch-failure guarantee)", async () => {
@@ -512,5 +526,127 @@ describe("panel-store clearForNoRepo", () => {
     expect(s.filter.searchQuery).toBe("keep");
     expect(s.filter.author).toBe("carol");
     expect(s.filter.dateRange).toBe("today");
+  });
+});
+
+describe("panel-store ref selection", () => {
+  const localMain: GitRefIdentity = {
+    type: "local",
+    name: "main",
+    fullRef: "refs/heads/main",
+  };
+  const tagMain: GitRefIdentity = {
+    type: "tag",
+    name: "main",
+    fullRef: "refs/tags/main",
+  };
+
+  it("selects same-named refs independently and clears them on repo switch", () => {
+    usePanelStore.setState({ selectedRefs: [], lastSelectedRefKey: null });
+
+    usePanelStore
+      .getState()
+      .selectRef(localMain, "single", [localMain, tagMain]);
+    usePanelStore.getState().selectRef(tagMain, "toggle", [localMain, tagMain]);
+
+    expect(usePanelStore.getState().selectedRefs).toEqual([localMain, tagMain]);
+
+    usePanelStore.getState().resetForRepoSwitch();
+    expect(usePanelStore.getState().selectedRefs).toEqual([]);
+    expect(usePanelStore.getState().lastSelectedRefKey).toBeNull();
+  });
+
+  it("persists favorite state and patches only the matching ref type", async () => {
+    const request = vi.mocked(bridge.request);
+    request.mockResolvedValueOnce({ ref: tagMain, isFavorite: true });
+    usePanelStore.setState({
+      branches: [
+        {
+          name: "main",
+          fullRef: "refs/heads/main",
+          isRemote: false,
+          isCurrent: true,
+          isFavorite: false,
+        } as never,
+      ],
+      tags: [
+        {
+          name: "main",
+          fullRef: "refs/tags/main",
+          isFavorite: false,
+        } as never,
+      ],
+    });
+
+    await usePanelStore.getState().setFavorite(tagMain, true);
+
+    expect(request).toHaveBeenCalledWith("setFavorite", {
+      ref: tagMain,
+      favorite: true,
+    });
+    expect(usePanelStore.getState().branches[0].isFavorite).toBe(false);
+    expect(usePanelStore.getState().tags[0].isFavorite).toBe(true);
+  });
+
+  it("loads and persists branch dashboard preferences", async () => {
+    const request = vi.mocked(bridge.request);
+    request
+      .mockResolvedValueOnce({ showTags: false, singleClickAction: "navigate" })
+      .mockResolvedValueOnce({ showTags: true, singleClickAction: "filter" });
+
+    await usePanelStore.getState().loadBranchDashboardPreferences();
+    expect(usePanelStore.getState().showTags).toBe(false);
+    expect(usePanelStore.getState().singleClickAction).toBe("navigate");
+
+    await usePanelStore
+      .getState()
+      .setBranchDashboardPreferences({ showTags: true });
+    expect(request).toHaveBeenLastCalledWith(
+      "setBranchDashboardPreferences",
+      { showTags: true },
+      { scope: "global" },
+    );
+    expect(usePanelStore.getState().showTags).toBe(true);
+    expect(usePanelStore.getState().singleClickAction).toBe("filter");
+  });
+
+  it("navigates to a loaded ref target and exposes a one-shot scroll target", async () => {
+    usePanelStore.setState({
+      commits: [{ hash: "tip" } as never],
+      visibleCommits: [{ hash: "tip" } as never],
+      scrollTargetHash: null,
+    });
+
+    await usePanelStore.getState().navigateToRef(localMain, "tip");
+
+    expect(usePanelStore.getState().selectedCommitHash).toBe("tip");
+    expect(usePanelStore.getState().scrollTargetHash).toBe("tip");
+    usePanelStore.getState().clearScrollTarget();
+    expect(usePanelStore.getState().scrollTargetHash).toBeNull();
+  });
+
+  it("loads additional pages before navigating to an older ref target", async () => {
+    const originalLoadMore = usePanelStore.getState().loadMore;
+    const loadMore = vi.fn(async () => {
+      usePanelStore.setState({
+        commits: [{ hash: "old-tip" } as never],
+        visibleCommits: [{ hash: "old-tip" } as never],
+        hasMore: false,
+      });
+    });
+    usePanelStore.setState({
+      commits: [],
+      visibleCommits: [],
+      hasMore: true,
+      loading: false,
+      loadMore,
+    });
+
+    await usePanelStore.getState().navigateToRef(localMain, "old-tip");
+
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(usePanelStore.getState().selectedCommitHash).toBe("old-tip");
+    expect(usePanelStore.getState().scrollTargetHash).toBe("old-tip");
+    usePanelStore.setState({ loadMore: originalLoadMore });
   });
 });
