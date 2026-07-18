@@ -16,6 +16,7 @@ import type {
   IdeaShelfEntry,
   LaneSnapshot,
   LogOptions,
+  LogRevision,
   MergeState,
   RefInfo,
   TagInfo,
@@ -81,6 +82,50 @@ export class GitService {
     }
   }
 
+  private async validateRef(ref: string): Promise<void> {
+    if (ref === "HEAD") {
+      return;
+    }
+    if (!ref.startsWith("refs/")) {
+      throw new Error(`Invalid Git ref: ${ref}`);
+    }
+    try {
+      await this.execGit(["check-ref-format", ref]);
+    } catch {
+      throw new Error(`Invalid Git ref: ${ref}`);
+    }
+  }
+
+  private async appendRevision(
+    args: string[],
+    revision: LogRevision | undefined,
+    branch: string | undefined,
+  ): Promise<void> {
+    if (!revision) {
+      if (branch) {
+        args.push(branch);
+      } else {
+        args.push("--all");
+      }
+      return;
+    }
+
+    switch (revision.kind) {
+      case "all":
+        args.push("--all");
+        return;
+      case "ref":
+        await this.validateRef(revision.ref);
+        args.push(revision.ref);
+        return;
+      case "range":
+        await this.validateRef(revision.excludeRef);
+        await this.validateRef(revision.includeRef);
+        args.push(`${revision.excludeRef}..${revision.includeRef}`);
+        return;
+    }
+  }
+
   async getLog(options: LogOptions = {}): Promise<CommitNode[]> {
     const cacheKey = `log:${JSON.stringify(options)}`;
     const cached = this.cache.get<CommitNode[]>(cacheKey);
@@ -114,11 +159,7 @@ export class GitService {
     if (options.until) {
       args.push(`--until=${options.until}`);
     }
-    if (options.branch) {
-      args.push(options.branch);
-    } else {
-      args.push("--all");
-    }
+    await this.appendRevision(args, options.revision, options.branch);
     if (options.file) {
       args.push("--", options.file);
     }
@@ -136,6 +177,20 @@ export class GitService {
     const commits = await this.getLog(options);
     const breakHiddenParents = !!options.search;
     return computeGraphLayout(commits, prevSnapshot, breakHiddenParents);
+  }
+
+  async resolveCommitRef(ref: string): Promise<string | null> {
+    await this.validateRef(ref);
+    try {
+      return (
+        await this.execGit(["rev-parse", "--verify", `${ref}^{commit}`])
+      ).trim();
+    } catch (error) {
+      if (typeof (error as { code?: unknown }).code === "number") {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async getBranches(): Promise<BranchInfo[]> {

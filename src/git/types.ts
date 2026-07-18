@@ -84,9 +84,15 @@ export interface DiffFile {
   isBinary: boolean;
 }
 
+export type LogRevision =
+  | { kind: "all" }
+  | { kind: "ref"; ref: string }
+  | { kind: "range"; excludeRef: string; includeRef: string };
+
 export interface LogOptions {
   maxCount?: number; // default 200
   skip?: number;
+  revision?: LogRevision;
   branch?: string; // specific branch, default --all
   author?: string;
   search?: string; // --grep
