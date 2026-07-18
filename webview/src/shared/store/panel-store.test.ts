@@ -21,6 +21,7 @@ vi.mock("../bridge", () => ({
 // Import after the mock is installed so the module-load onEvent call is captured.
 const {
   createGitLogStore,
+  createRepoOperationProgressGroup,
   defaultGitLogStore,
   _resetOperationProgressForTests,
   _beginClientOperation,
@@ -541,6 +542,237 @@ describe("git log store instances", () => {
       expect(graphRequest).toHaveBeenCalledTimes(1);
     } finally {
       instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a fixed comparison when its repository leaves the workspace", async () => {
+    vi.useFakeTimers();
+    const request = vi.fn(async (command: string) => {
+      if (command === "getGraphData") return graphResult([commit("recovered")]);
+      if (
+        command === "getBranches" ||
+        command === "getTags" ||
+        command === "getCommitRangeFiles"
+      ) {
+        return [];
+      }
+      return null;
+    });
+    const fake = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+    instance.store.setState({
+      commits: [commit("stale")],
+      visibleCommits: [commit("stale")],
+      selectedCommitHash: "stale",
+      selectedCommitHashes: ["stale"],
+    });
+
+    try {
+      for (const handler of fake.handlers) {
+        handler("reposChanged", {
+          repos: [{ id: "repo-b", name: "B", rootPath: "/b" }],
+          activeId: "repo-b",
+        });
+      }
+      expect(instance.store.getState()).toMatchObject({
+        commits: [],
+        selectedCommitHash: null,
+        selectedCommitHashes: [],
+        loadError: {
+          kind: "repository-unavailable",
+          message: "Repository is no longer in the workspace",
+        },
+      });
+      expect(request).not.toHaveBeenCalled();
+
+      for (const handler of fake.handlers) {
+        handler("reposChanged", {
+          repos: [
+            { id: "repo-a", name: "A", rootPath: "/a" },
+            { id: "repo-b", name: "B", rootPath: "/b" },
+          ],
+          activeId: "repo-b",
+        });
+      }
+      await vi.advanceTimersByTimeAsync(100);
+      expect(request).toHaveBeenCalledWith(
+        "getGraphData",
+        expect.anything(),
+        expect.objectContaining({ repoId: "repo-a" }),
+      );
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("defers operation events and lets an explicit comparison refresh consume them", async () => {
+    vi.useFakeTimers();
+    const mutation = deferred<unknown>();
+    const graphRequest = vi.fn();
+    const request = vi.fn(async (command: string) => {
+      if (command === "cherryPick") return mutation.promise;
+      if (command === "getGraphData") {
+        graphRequest();
+        return graphResult([commit("tip")]);
+      }
+      if (
+        command === "getBranches" ||
+        command === "getTags" ||
+        command === "getCommitRangeFiles"
+      ) {
+        return [];
+      }
+      return null;
+    });
+    const fake = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+
+    try {
+      const operation = instance.store
+        .getState()
+        .requestWithProgressFromSurface("cherryPick", { hash: "tip" });
+      for (const handler of fake.handlers) {
+        handler("operationStart", { repoId: "repo-a" });
+        handler("gitStateChanged", { scope: "all", repoId: "repo-a" });
+        handler("commitStateChanged", { repoId: "repo-a" });
+        handler("operationEnd", { repoId: "repo-a" });
+      }
+      mutation.resolve({ success: true });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await operation;
+      expect(graphRequest).not.toHaveBeenCalled();
+
+      const explicitRefresh = instance.store
+        .getState()
+        .refresh({ preserveSelection: true });
+      await vi.runAllTimersAsync();
+      await explicitRefresh;
+      expect(graphRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds both comparison stores behind one client-operation barrier", async () => {
+    vi.useFakeTimers();
+    const mutation = deferred<unknown>();
+    const graphRequests = { top: vi.fn(), bottom: vi.fn() };
+    const request = vi.fn(
+      async (command: string, params?: Record<string, unknown>) => {
+        if (command === "cherryPick") return mutation.promise;
+        if (command === "getGraphData") {
+          const revision = params?.revision as
+            | { includeRef?: GitRefIdentity }
+            | undefined;
+          const side =
+            revision?.includeRef?.fullRef === "refs/heads/feature"
+              ? "top"
+              : "bottom";
+          graphRequests[side]();
+          return graphResult([commit(`${side}-tip`)]);
+        }
+        if (
+          command === "getBranches" ||
+          command === "getTags" ||
+          command === "getCommitRangeFiles"
+        ) {
+          return [];
+        }
+        return null;
+      },
+    );
+    const fake = createFakeBridge(request);
+    const operationProgressGroup = createRepoOperationProgressGroup();
+    const top = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "range",
+        excludeRef: {
+          type: "local",
+          name: "main",
+          fullRef: "refs/heads/main",
+        },
+        includeRef: {
+          type: "local",
+          name: "feature",
+          fullRef: "refs/heads/feature",
+        },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      operationProgressGroup,
+      bridge: fake.bridge,
+    });
+    const bottom = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "range",
+        excludeRef: {
+          type: "local",
+          name: "feature",
+          fullRef: "refs/heads/feature",
+        },
+        includeRef: {
+          type: "local",
+          name: "main",
+          fullRef: "refs/heads/main",
+        },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      operationProgressGroup,
+      bridge: fake.bridge,
+    });
+
+    try {
+      const operation = top.store
+        .getState()
+        .requestWithProgressFromSurface("cherryPick", { hash: "top-tip" });
+      for (const handler of fake.handlers) {
+        handler("operationStart", { repoId: "repo-a" });
+        handler("gitStateChanged", { scope: "all", repoId: "repo-a" });
+        handler("operationEnd", { repoId: "repo-a" });
+      }
+      mutation.resolve({ success: true });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await operation;
+      expect(graphRequests.top).not.toHaveBeenCalled();
+      expect(graphRequests.bottom).not.toHaveBeenCalled();
+
+      const refreshBoth = Promise.all([
+        top.store.getState().refresh({ preserveSelection: true }),
+        bottom.store.getState().refresh({ preserveSelection: true }),
+      ]);
+      await vi.runAllTimersAsync();
+      await refreshBoth;
+      expect(graphRequests.top).toHaveBeenCalledTimes(1);
+      expect(graphRequests.bottom).toHaveBeenCalledTimes(1);
+    } finally {
+      top.dispose();
+      bottom.dispose();
       vi.useRealTimers();
     }
   });

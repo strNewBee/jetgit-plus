@@ -156,7 +156,50 @@ export interface GitLogStoreOptions {
   history: { kind: "ordinary" } | { kind: "comparison"; revision: LogRevision };
   followGlobalActiveRepo: boolean;
   showCurrentReachability: boolean;
+  operationProgressGroup?: RepoOperationProgressGroup;
   bridge: Bridge;
+}
+
+export interface RepoOperationProgressGroup {
+  begin: (repoId: string) => void;
+  end: (repoId: string) => void;
+  getCount: (repoId: string) => number;
+  subscribe: (listener: () => void) => () => void;
+}
+
+/**
+ * Shares client-side operation progress across every log surface in one
+ * comparison session. Host operation events reach both surfaces already, but
+ * only the surface that initiated an action owns the one-second client
+ * progress facade. This group keeps both stores behind that same barrier until
+ * the action can run its explicit refreshBoth call.
+ */
+export function createRepoOperationProgressGroup(): RepoOperationProgressGroup {
+  const counts = new Map<string, number>();
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    begin(repoId) {
+      counts.set(repoId, (counts.get(repoId) ?? 0) + 1);
+      notify();
+    },
+    end(repoId) {
+      const next = (counts.get(repoId) ?? 0) - 1;
+      if (next <= 0) counts.delete(repoId);
+      else counts.set(repoId, next);
+      notify();
+    },
+    getCount(repoId) {
+      return counts.get(repoId) ?? 0;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      listener();
+      return () => listeners.delete(listener);
+    },
+  };
 }
 
 export interface GitLogStore {
@@ -337,6 +380,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
   let activeLogLoad: Promise<void> | null = null;
   let filterRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let repoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingRepoRefreshId: string | null = null;
   let currentReachabilityRef: GitRefIdentity | null = null;
   // Repository initialization is an intent, not a property of one request. A
   // watcher refresh may supersede the first request before branches resolve;
@@ -358,6 +402,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
       clearTimeout(repoRefreshTimer);
       repoRefreshTimer = null;
     }
+    pendingRepoRefreshId = null;
   }
 
   const boundRepoId = () =>
@@ -458,7 +503,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     requestFromSurface,
     async requestWithProgressFromSurface(command, params, requestOptions) {
       const repoId = boundRepoId();
-      if (repoId !== null) incrementInFlight(repoId);
+      if (repoId !== null) beginClientOperationProgress(repoId);
       const start = Date.now();
       try {
         const result = await requestFromSurface(
@@ -472,7 +517,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         }
         return result;
       } finally {
-        if (repoId !== null) decrementInFlight(repoId);
+        if (repoId !== null) endClientOperationProgress(repoId);
       }
     },
 
@@ -1310,6 +1355,14 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     },
 
     async refresh(refreshOptions = {}) {
+      // A command surface explicitly refreshes after its mutation succeeds.
+      // Consume any watcher/event refresh queued for the same mutation so the
+      // comparison does not perform the same graph load twice.
+      if (repoRefreshTimer) {
+        clearTimeout(repoRefreshTimer);
+        repoRefreshTimer = null;
+      }
+      pendingRepoRefreshId = null;
       set({
         collapsedSequenceIds: new Set(),
         collapsedIntermediates: new Map(),
@@ -1377,10 +1430,20 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
   function recomputeOperationInProgress(): void {
     const repoId = visibleRepoId();
-    store.setState({
-      operationInProgress:
-        repoId !== null && (inFlightOpCounts.get(repoId) ?? 0) > 0,
-    });
+    const operationInProgress =
+      repoId !== null &&
+      (inFlightOpCounts.get(repoId) ?? 0) +
+        (options.operationProgressGroup?.getCount(repoId) ?? 0) >
+        0;
+    store.setState({ operationInProgress });
+    if (operationInProgress) {
+      if (repoRefreshTimer) {
+        clearTimeout(repoRefreshTimer);
+        repoRefreshTimer = null;
+      }
+    } else {
+      resumePendingRepoRefresh();
+    }
   }
 
   function incrementInFlight(repoId: string): void {
@@ -1398,10 +1461,27 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     recomputeOperationInProgress();
   }
 
-  function scheduleRepoRefresh(repoId: string): void {
+  function beginClientOperationProgress(repoId: string): void {
+    if (options.operationProgressGroup) {
+      options.operationProgressGroup.begin(repoId);
+    } else {
+      incrementInFlight(repoId);
+    }
+  }
+
+  function endClientOperationProgress(repoId: string): void {
+    if (options.operationProgressGroup) {
+      options.operationProgressGroup.end(repoId);
+    } else {
+      decrementInFlight(repoId);
+    }
+  }
+
+  function armRepoRefresh(repoId: string): void {
     if (repoRefreshTimer) clearTimeout(repoRefreshTimer);
     repoRefreshTimer = setTimeout(() => {
       repoRefreshTimer = null;
+      pendingRepoRefreshId = null;
       if (disposed || repoId !== visibleRepoId()) return;
       void store.getState().refresh({
         preserveSelection: options.history.kind === "comparison",
@@ -1409,7 +1489,61 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     }, REPO_REFRESH_DEBOUNCE_MS);
   }
 
+  function resumePendingRepoRefresh(): void {
+    const repoId = pendingRepoRefreshId;
+    if (
+      repoId === null ||
+      disposed ||
+      repoId !== visibleRepoId() ||
+      store.getState().operationInProgress ||
+      repoRefreshTimer
+    ) {
+      return;
+    }
+    armRepoRefresh(repoId);
+  }
+
+  function scheduleRepoRefresh(repoId: string): void {
+    pendingRepoRefreshId = repoId;
+    if (store.getState().operationInProgress) {
+      if (repoRefreshTimer) {
+        clearTimeout(repoRefreshTimer);
+        repoRefreshTimer = null;
+      }
+      return;
+    }
+    armRepoRefresh(repoId);
+  }
+
   const unsubscribeEvents = options.bridge.onEvent((event, data) => {
+    if (
+      event === "reposChanged" &&
+      options.history.kind === "comparison" &&
+      options.repoId !== null
+    ) {
+      const { repos } = data as { repos?: Array<{ id: string }> };
+      const repositoryStillExists =
+        Array.isArray(repos) &&
+        repos.some((repository) => repository.id === options.repoId);
+      if (!repositoryStillExists) {
+        invalidateRepoAsyncWork();
+        inFlightOpCounts.delete(options.repoId);
+        recomputeOperationInProgress();
+        store.setState({
+          ..._clearRepoBoundDisplay(),
+          hasMore: false,
+          loading: false,
+          loadError: {
+            kind: "repository-unavailable",
+            message: "Repository is no longer in the workspace",
+          },
+        });
+      } else if (
+        store.getState().loadError?.kind === "repository-unavailable"
+      ) {
+        scheduleRepoRefresh(options.repoId);
+      }
+    }
     const refreshesComparison =
       event === "gitStateChanged" ||
       (event === "commitStateChanged" && options.history.kind === "comparison");
@@ -1449,14 +1583,17 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         }
       })
     : null;
+  const unsubscribeOperationProgressGroup =
+    options.operationProgressGroup?.subscribe(recomputeOperationInProgress) ??
+    null;
 
   return {
     store,
     beginClientOperation(repoId) {
-      if (typeof repoId === "string") incrementInFlight(repoId);
+      if (typeof repoId === "string") beginClientOperationProgress(repoId);
     },
     endClientOperation(repoId) {
-      if (typeof repoId === "string") decrementInFlight(repoId);
+      if (typeof repoId === "string") endClientOperationProgress(repoId);
     },
     resetOperationProgressForTests() {
       inFlightOpCounts.clear();
@@ -1468,6 +1605,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
       invalidateRepoAsyncWork();
       unsubscribeEvents();
       unsubscribeActiveRepo?.();
+      unsubscribeOperationProgressGroup?.();
     },
   };
 }

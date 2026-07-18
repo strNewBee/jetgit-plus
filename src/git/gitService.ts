@@ -103,6 +103,17 @@ export class GitService {
     }
   }
 
+  private async validateBranch(branch: string): Promise<void> {
+    try {
+      // The legacy log protocol still accepts a plain branch field. Validate
+      // it as a branch/ref name before appending it to argv so values beginning
+      // with '-' cannot be reinterpreted as Git options.
+      await this.execGit(["check-ref-format", "--branch", branch]);
+    } catch {
+      throw new Error(`Invalid Git branch: ${branch}`);
+    }
+  }
+
   private async appendRevision(
     args: string[],
     revision: LogRevision | undefined,
@@ -110,6 +121,7 @@ export class GitService {
   ): Promise<void> {
     if (!revision) {
       if (branch) {
+        await this.validateBranch(branch);
         args.push(branch);
       } else {
         args.push("--all");

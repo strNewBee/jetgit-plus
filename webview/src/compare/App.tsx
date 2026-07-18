@@ -4,6 +4,7 @@ import "allotment/dist/style.css";
 import { bridge } from "../shared/bridge";
 import {
   createGitLogStore,
+  createRepoOperationProgressGroup,
   type GitLogStore,
 } from "../shared/store/panel-store";
 import type { GitRefIdentity, GitRefType } from "../shared/types/git";
@@ -72,6 +73,7 @@ export function CompareApp() {
   useEffect(() => {
     if (!seed.repoId || !seed.selectedRef || !seed.currentRef) return;
 
+    const operationProgressGroup = createRepoOperationProgressGroup();
     const top = createGitLogStore({
       repoId: seed.repoId,
       history: {
@@ -84,6 +86,7 @@ export function CompareApp() {
       },
       followGlobalActiveRepo: false,
       showCurrentReachability: false,
+      operationProgressGroup,
       bridge,
     });
     const bottom = createGitLogStore({
@@ -98,6 +101,7 @@ export function CompareApp() {
       },
       followGlobalActiveRepo: false,
       showCurrentReachability: false,
+      operationProgressGroup,
       bridge,
     });
     const refreshBoth = async () => {

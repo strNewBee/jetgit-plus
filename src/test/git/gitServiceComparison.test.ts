@@ -366,6 +366,10 @@ describe("GitService structured comparison revisions", () => {
         }),
       );
       await assert.rejects(service.resolveCommitRef("--all"));
+      await assert.rejects(
+        service.getLog({ branch: "--format=attacker-controlled" }),
+        /Invalid Git branch: --format=attacker-controlled/,
+      );
     } finally {
       await fs.rm(base, { recursive: true, force: true });
     }
