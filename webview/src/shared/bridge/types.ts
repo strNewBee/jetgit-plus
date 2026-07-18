@@ -1,3 +1,37 @@
+import type {
+  GitRefIdentity,
+  GraphLayoutResult,
+  LaneSnapshot,
+} from "../types/git";
+
+export type LogQueryRevision =
+  | { kind: "all" }
+  | { kind: "ref"; ref: GitRefIdentity }
+  | {
+      kind: "range";
+      excludeRef: GitRefIdentity;
+      includeRef: GitRefIdentity;
+    };
+
+export interface LogQueryParams extends Record<string, unknown> {
+  maxCount?: number;
+  count?: number;
+  skip?: number;
+  snapshot?: LaneSnapshot;
+  revision?: LogQueryRevision;
+  currentRef?: GitRefIdentity;
+  branch?: string;
+  search?: string;
+  author?: string;
+  since?: string;
+  until?: string;
+  file?: string;
+}
+
+export type LogQueryResult =
+  | ({ status: "ok"; hasMore: boolean } & GraphLayoutResult)
+  | { status: "ref-unavailable"; ref: GitRefIdentity };
+
 /**
  * Public repo identity as seen by the webview. The host-only `RepositoryPaths`
  * (workTreeRoot/gitDir/commonDir) is intentionally NOT mirrored here.

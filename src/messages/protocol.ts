@@ -1,5 +1,35 @@
+import type { GitRefIdentity } from "../git/branchDashboardState";
 import type { GitService } from "../git/gitService";
 import type { RepoDescriptor, RepositoryPaths } from "../git/repoRegistry";
+import type { GraphLayoutResult, LaneSnapshot } from "../git/types";
+
+export type LogQueryRevision =
+  | { kind: "all" }
+  | { kind: "ref"; ref: GitRefIdentity }
+  | {
+      kind: "range";
+      excludeRef: GitRefIdentity;
+      includeRef: GitRefIdentity;
+    };
+
+export interface LogQueryParams extends Record<string, unknown> {
+  maxCount?: number;
+  count?: number;
+  skip?: number;
+  snapshot?: LaneSnapshot;
+  revision?: LogQueryRevision;
+  currentRef?: GitRefIdentity;
+  branch?: string;
+  search?: string;
+  author?: string;
+  since?: string;
+  until?: string;
+  file?: string;
+}
+
+export type LogQueryResult =
+  | ({ status: "ok"; hasMore: boolean } & GraphLayoutResult)
+  | { status: "ref-unavailable"; ref: GitRefIdentity };
 
 export interface RequestMessage {
   type: "request";

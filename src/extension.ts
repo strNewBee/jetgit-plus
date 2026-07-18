@@ -19,7 +19,8 @@ import {
   RepoSelectionError,
   Serializer,
 } from "./git/repoSelection";
-import type { DiffFile, LaneSnapshot } from "./git/types";
+import type { DiffFile } from "./git/types";
+import { registerLogHandlers } from "./messages/logHandlers";
 import { MessageRouter } from "./messages/messageRouter";
 import { ErrorCode } from "./messages/protocol";
 import { CommitViewProvider } from "./views/commitViewProvider";
@@ -337,6 +338,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // 6. Register command handlers to MessageRouter
   // If GitService is unavailable, handlers return { status: 'not_git_repo' }
 
+  registerLogHandlers(messageRouter);
+
   messageRouter.handle("openMergeEditor", async (params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;
     const file = (params.file as string) ?? "untitled";
@@ -392,50 +395,6 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }
     return undefined;
-  });
-
-  messageRouter.handle("getGraphData", async (params, ctx) => {
-    if (!ctx) {
-      return NOT_GIT_REPO;
-    }
-    const { gitService } = ctx;
-    const options = {
-      maxCount: (params.maxCount as number) ?? 200,
-      skip: params.skip as number | undefined,
-      branch: params.branch as string | undefined,
-      search: params.search as string | undefined,
-      author: params.author as string | undefined,
-      file: params.file as string | undefined,
-    };
-    const snapshot = params.snapshot as LaneSnapshot | undefined;
-    const result = await gitService.getGraphTopology(options, snapshot);
-    return result;
-  });
-
-  messageRouter.handle("getLog", async (params, ctx) => {
-    if (!ctx) {
-      return NOT_GIT_REPO;
-    }
-    return ctx.gitService.getLog(
-      params as Record<string, unknown> & { maxCount?: number },
-    );
-  });
-
-  messageRouter.handle("loadMoreLog", async (params, ctx) => {
-    if (!ctx) {
-      return NOT_GIT_REPO;
-    }
-    const { gitService } = ctx;
-    const options = {
-      maxCount: (params.count as number) ?? 200,
-      skip: (params.skip as number) ?? 0,
-      branch: params.branch as string | undefined,
-      search: params.search as string | undefined,
-      author: params.author as string | undefined,
-    };
-    const snapshot = params.snapshot as LaneSnapshot | undefined;
-    const result = await gitService.getGraphTopology(options, snapshot);
-    return result;
   });
 
   messageRouter.handle("getBranches", async (_params, ctx) => {

@@ -42,6 +42,28 @@ function serviceFor(repo: string): GitService {
   });
 }
 
+function bySubject(
+  commits: Awaited<ReturnType<GitService["getLogWithReachability"]>>,
+  subject: string,
+) {
+  const commit = commits.find((item) => item.subject === subject);
+  assert.ok(commit, `missing commit with subject: ${subject}`);
+  return commit;
+}
+
+async function waitFor(
+  condition: () => boolean,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function createComparisonRepository(
   withUnfilteredFeatureCommit = false,
 ): Promise<{
@@ -129,6 +151,96 @@ async function createComparisonRepository(
 }
 
 describe("GitService structured comparison revisions", () => {
+  it("marks every returned commit by reachability from the current ref", async () => {
+    const { base, repo } = await createComparisonRepository();
+    try {
+      const service = serviceFor(repo);
+      const result = await service.getLogWithReachability(
+        { revision: { kind: "all" }, maxCount: 200 },
+        "refs/heads/main",
+      );
+
+      assert.strictEqual(
+        bySubject(result, "common").reachableFromCurrent,
+        true,
+      );
+      assert.strictEqual(
+        bySubject(result, "main only").reachableFromCurrent,
+        true,
+      );
+      assert.strictEqual(
+        bySubject(result, "feature only").reachableFromCurrent,
+        false,
+      );
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("shares an in-flight reachability load and replaces it after the tip moves", async () => {
+    const { base, repo, commonCommitHash, mainCommitHash } =
+      await createComparisonRepository();
+    try {
+      const loads: string[] = [];
+      const pending = new Map<
+        string,
+        { promise: Promise<Set<string>>; resolve: (value: Set<string>) => void }
+      >();
+      class InstrumentedGitService extends GitService {
+        protected override loadReachableHashes(
+          tip: string,
+        ): Promise<Set<string>> {
+          loads.push(tip);
+          let resolve!: (value: Set<string>) => void;
+          const promise = new Promise<Set<string>>((done) => {
+            resolve = done;
+          });
+          pending.set(tip, { promise, resolve });
+          return promise;
+        }
+      }
+      const service = new InstrumentedGitService({
+        workTreeRoot: repo,
+        gitDir: path.join(repo, ".git"),
+        commonDir: path.join(repo, ".git"),
+      });
+
+      const first = service.getLogWithReachability(
+        { revision: { kind: "all" } },
+        "refs/heads/main",
+      );
+      const second = service.getLogWithReachability(
+        { revision: { kind: "all" } },
+        "refs/heads/main",
+      );
+      await waitFor(() => loads.length === 1, "the first reachability load");
+      assert.deepStrictEqual(loads, [mainCommitHash]);
+      pending
+        .get(mainCommitHash)
+        ?.resolve(new Set([commonCommitHash, mainCommitHash]));
+      await Promise.all([first, second]);
+
+      await git(repo, "update-ref", "refs/heads/main", commonCommitHash);
+      const afterMove = service.getLogWithReachability(
+        { revision: { kind: "all" } },
+        "refs/heads/main",
+      );
+      await waitFor(
+        () => loads.length === 2,
+        "the replacement reachability load",
+      );
+      assert.deepStrictEqual(loads, [mainCommitHash, commonCommitHash]);
+      pending.get(commonCommitHash)?.resolve(new Set([commonCommitHash]));
+      const movedResult = await afterMove;
+      assert.strictEqual(
+        bySubject(movedResult, "main only").reachableFromCurrent,
+        false,
+      );
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
   it("returns only commits selected by each side of a comparison range", async () => {
     const { base, repo } = await createComparisonRepository();
     try {

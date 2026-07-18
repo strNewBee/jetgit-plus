@@ -8,6 +8,7 @@ export interface Commit {
   subject: string;
   body: string;
   refs: RefInfo[];
+  reachableFromCurrent?: boolean;
 }
 
 export interface RefInfo {

@@ -31,3 +31,10 @@ export class GitCache {
     }
   }
 }
+
+/** A single resolved commit tip and its completed or in-flight reachability set. */
+export interface ReachabilityCacheEntry {
+  tip: string;
+  hashes?: Set<string>;
+  pending?: Promise<Set<string>>;
+}

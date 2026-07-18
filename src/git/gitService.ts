@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { GitCache } from "./cache";
+import { GitCache, type ReachabilityCacheEntry } from "./cache";
 import { JetGitError, JetGitErrorCode } from "./errors";
 import { computeGraphLayout } from "./graphLayout";
 import type {
@@ -50,6 +50,7 @@ import type { RepositoryPaths } from "./repoRegistry";
 
 export class GitService {
   readonly cache = new GitCache();
+  private reachabilityCache: ReachabilityCacheEntry | null = null;
 
   constructor(readonly paths: RepositoryPaths) {}
 
@@ -170,11 +171,28 @@ export class GitService {
     return commits;
   }
 
+  async getLogWithReachability(
+    options: LogOptions,
+    currentRef: string,
+  ): Promise<CommitNode[]> {
+    const [commits, reachableHashes] = await Promise.all([
+      this.getLog(options),
+      this.getReachableHashes(currentRef),
+    ]);
+    return commits.map((commit) => ({
+      ...commit,
+      reachableFromCurrent: reachableHashes.has(commit.hash),
+    }));
+  }
+
   async getGraphTopology(
     options: LogOptions = {},
     prevSnapshot?: LaneSnapshot,
+    currentRef?: string,
   ): Promise<GraphLayoutResult> {
-    const commits = await this.getLog(options);
+    const commits = currentRef
+      ? await this.getLogWithReachability(options, currentRef)
+      : await this.getLog(options);
     const breakHiddenParents = !!options.search;
     return computeGraphLayout(commits, prevSnapshot, breakHiddenParents);
   }
@@ -196,6 +214,87 @@ export class GitService {
       }
       throw error;
     }
+  }
+
+  private async getReachableHashes(ref: string): Promise<Set<string>> {
+    const tip = await this.resolveCommitRef(ref);
+    if (!tip) {
+      throw new Error(`Git ref is unavailable: ${ref}`);
+    }
+
+    const cached = this.reachabilityCache;
+    if (cached?.tip === tip) {
+      if (cached.hashes) {
+        return cached.hashes;
+      }
+      if (cached.pending) {
+        return cached.pending;
+      }
+    }
+
+    const entry: ReachabilityCacheEntry = { tip };
+    const pending = this.loadReachableHashes(tip).then(
+      (hashes) => {
+        if (this.reachabilityCache === entry) {
+          entry.hashes = hashes;
+          entry.pending = undefined;
+        }
+        return hashes;
+      },
+      (error) => {
+        if (this.reachabilityCache === entry) {
+          this.reachabilityCache = null;
+        }
+        throw error;
+      },
+    );
+    entry.pending = pending;
+    this.reachabilityCache = entry;
+    return pending;
+  }
+
+  protected loadReachableHashes(tip: string): Promise<Set<string>> {
+    return new Promise((resolve, reject) => {
+      const hashes = new Set<string>();
+      let remainder = "";
+      let stderr = "";
+      const child = spawn("git", ["rev-list", tip], {
+        cwd: this.rootPath,
+        env: {
+          ...process.env,
+          LC_ALL: "C",
+          GIT_TERMINAL_PROMPT: "0",
+        },
+      });
+
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        const lines = `${remainder}${chunk}`.split("\n");
+        remainder = lines.pop() ?? "";
+        for (const line of lines) {
+          const hash = line.trim();
+          if (hash) hashes.add(hash);
+        }
+      });
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        const finalHash = remainder.trim();
+        if (finalHash) hashes.add(finalHash);
+        if (code === 0) {
+          resolve(hashes);
+          return;
+        }
+        reject(
+          new Error(
+            stderr.trim() || `git rev-list exited with status ${String(code)}`,
+          ),
+        );
+      });
+    });
   }
 
   async getBranches(): Promise<BranchInfo[]> {
