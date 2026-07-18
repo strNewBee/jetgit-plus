@@ -354,6 +354,55 @@ describe("git log store instances", () => {
     instance.dispose();
   });
 
+  it("tags repository removal separately from generic load failures and clears errors on recovery", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    let error: unknown = {
+      code: "REPO_NOT_FOUND",
+      message: "Repository was removed",
+    };
+    const { bridge: fakeBridge } = createFakeBridge(
+      vi.fn(async (command) => {
+        if (command === "getGraphData" && error) throw error;
+        if (command === "getGraphData") return graphResult([commit("tip")]);
+        if (command === "getBranches" || command === "getTags") return [];
+        if (command === "getCommitRangeFiles") return [];
+        return null;
+      }),
+    );
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    await instance.store.getState().fetchInitialData();
+    expect(instance.store.getState().loadError).toEqual({
+      kind: "repository-unavailable",
+      message: "Repository was removed",
+    });
+
+    error = Object.assign(new Error("Git process failed"), {
+      code: "GIT_FAILED",
+    });
+    await instance.store.getState().refresh();
+    expect(instance.store.getState().loadError).toEqual({
+      kind: "generic",
+      message: "Git process failed",
+    });
+
+    error = null;
+    await instance.store.getState().refresh();
+    expect(instance.store.getState().loadError).toBeNull();
+    expect(instance.store.getState().commits[0]?.hash).toBe("tip");
+    instance.dispose();
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    consoleError.mockRestore();
+  });
+
   it("ignores global file-history events in a fixed ordinary store", () => {
     const fake = createFakeBridge();
     const instance = createGitLogStore({

@@ -25,9 +25,11 @@ const DEFAULT_COLUMN_WIDTHS: ColumnWidths = {
 export function CommitList({
   onScroll,
   onHeaderHeight,
+  onRefreshComparison,
 }: {
   onScroll?: (scrollTop: number) => void;
   onHeaderHeight?: (height: number) => void;
+  onRefreshComparison?: () => void | Promise<void>;
 }) {
   const visibleCommits = useGitLogStore((s) => s.visibleCommits);
   const graphLayout = useGitLogStore((s) => s.graphLayout);
@@ -194,8 +196,8 @@ export function CommitList({
   // Keyboard navigation (Arrow Up/Down)
   const selectedCommitHashes = useGitLogStore((s) => s.selectedCommitHashes);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (!visibleCommits.length) return;
 
@@ -237,17 +239,15 @@ export function CommitList({
           ? Math.min(nextIdx + 3, visibleCommits.length - 1)
           : Math.max(nextIdx - 3, 0);
       virtualizer.scrollToIndex(scrollIdx, { align: "auto" });
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [
-    visibleCommits,
-    selectedCommitHashes,
-    selectCommit,
-    allVisibleCommitHashes,
-    virtualizer,
-  ]);
+    },
+    [
+      visibleCommits,
+      selectedCommitHashes,
+      selectCommit,
+      allVisibleCommitHashes,
+      virtualizer,
+    ],
+  );
 
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
@@ -416,6 +416,13 @@ export function CommitList({
       {/* Scrollable commit list */}
       <div
         ref={parentRef}
+        tabIndex={0}
+        aria-label="Commit list"
+        onKeyDown={handleKeyDown}
+        onMouseDown={(event) => {
+          if (event.button === 0)
+            event.currentTarget.focus({ preventScroll: true });
+        }}
         style={{
           flex: 1,
           minHeight: 0,
@@ -464,6 +471,7 @@ export function CommitList({
             y={contextMenu.y}
             commit={contextMenu.commit}
             onClose={closeContextMenu}
+            onRefreshComparison={onRefreshComparison}
             onCreateBranch={(hash, _defaultName) => {
               closeContextMenu();
               const shortHash = hash.slice(0, 8);

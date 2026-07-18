@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { CommitApp } from "./commit/App";
+import { CompareApp } from "./compare/App";
 import { ConflictsApp } from "./conflicts/App";
 import { MergeStandaloneApp } from "./conflicts/MergeStandaloneApp";
 import { PanelApp } from "./panel/App";
@@ -50,14 +51,9 @@ createRoot(root).render(
     ) : mode === "rollback" ? (
       <RollbackApp />
     ) : mode === "compare" ? (
-      // Task 7 replaces this isolated mount with CompareApp.
-      <ComparePlaceholder />
+      <CompareApp />
     ) : (
       <PanelApp />
     )}
   </StrictMode>,
 );
-
-function ComparePlaceholder() {
-  return null;
-}

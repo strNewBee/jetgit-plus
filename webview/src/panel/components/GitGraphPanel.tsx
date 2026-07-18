@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { CommitList } from "./CommitList";
 import { GitGraphSvg } from "./GitGraphSvg";
 
-export function GitGraphPanel() {
+export function GitGraphPanel({
+  onRefreshComparison,
+}: {
+  onRefreshComparison?: () => void | Promise<void>;
+} = {}) {
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(600);
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -36,7 +40,11 @@ export function GitGraphPanel() {
         minHeight: 0,
       }}
     >
-      <CommitList onScroll={setScrollTop} onHeaderHeight={setHeaderHeight} />
+      <CommitList
+        onScroll={setScrollTop}
+        onHeaderHeight={setHeaderHeight}
+        onRefreshComparison={onRefreshComparison}
+      />
       <GitGraphSvg
         scrollTop={scrollTop}
         height={svgHeight > 0 ? svgHeight : 0}

@@ -3,7 +3,11 @@ import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
 import { useGitLogStore } from "../../shared/store/git-log-store-context";
 
-export function Toolbar() {
+export function Toolbar({
+  showBranchFilter = true,
+}: {
+  showBranchFilter?: boolean;
+} = {}) {
   const setFilter = useGitLogStore((s) => s.setFilter);
   const filter = useGitLogStore((s) => s.filter);
   const commits = useGitLogStore((s) => s.commits);
@@ -99,31 +103,33 @@ export function Toolbar() {
         onChange={handleSearch}
       />
 
-      {/* Branch filter */}
-      <div style={{ position: "relative" }}>
-        <FilterButton
-          label="Branch"
-          active={!!filter.branch}
-          activeValue={historyBranch}
-          onClick={() => {
-            setShowBranchDropdown(!showBranchDropdown);
-            setShowUserDropdown(false);
-            setShowDateDropdown(false);
-          }}
-          onClear={handleClearBranch}
-        />
-        {showBranchDropdown && (
-          <SearchableDropdown
-            items={branchNames}
-            activeItem={filter.branch}
-            placeholder="Select branch..."
-            onSelect={handleSelectBranch}
-            onClear={filter.branch ? handleClearBranch : undefined}
-            clearLabel="All branches"
-            onClose={() => setShowBranchDropdown(false)}
+      {/* Fixed revision ranges omit only the branch selector. */}
+      {showBranchFilter && (
+        <div style={{ position: "relative" }}>
+          <FilterButton
+            label="Branch"
+            active={!!filter.branch}
+            activeValue={historyBranch}
+            onClick={() => {
+              setShowBranchDropdown(!showBranchDropdown);
+              setShowUserDropdown(false);
+              setShowDateDropdown(false);
+            }}
+            onClear={handleClearBranch}
           />
-        )}
-      </div>
+          {showBranchDropdown && (
+            <SearchableDropdown
+              items={branchNames}
+              activeItem={filter.branch}
+              placeholder="Select branch..."
+              onSelect={handleSelectBranch}
+              onClear={filter.branch ? handleClearBranch : undefined}
+              clearLabel="All branches"
+              onClose={() => setShowBranchDropdown(false)}
+            />
+          )}
+        </div>
+      )}
 
       {/* User filter */}
       <div style={{ position: "relative" }}>

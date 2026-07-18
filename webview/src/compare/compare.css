@@ -1,0 +1,94 @@
+.compare-app {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  color: var(--app-fg);
+  background: var(--app-bg);
+}
+
+.compare-app-state,
+.compare-surface-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  color: var(--description-fg);
+  text-align: center;
+}
+
+.compare-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--app-bg);
+}
+
+.compare-surface-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.compare-surface-title {
+  font-weight: 600;
+}
+
+.compare-surface-range {
+  overflow: hidden;
+  color: var(--description-fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-surface-progress {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 4;
+  height: 2px;
+  background: var(--vscode-progressBar-background);
+}
+
+.compare-surface-body,
+.compare-surface-log,
+.compare-surface-graph,
+.compare-surface-detail {
+  min-width: 0;
+  min-height: 0;
+}
+
+.compare-surface-body {
+  flex: 1 1 auto;
+}
+
+.compare-surface-log {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.compare-surface-graph {
+  display: flex;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.compare-surface-detail {
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+}

@@ -27,6 +27,11 @@ export interface PanelFilter {
   file: string;
 }
 
+export interface PanelLoadError {
+  kind: "repository-unavailable" | "generic";
+  message: string;
+}
+
 export interface FetchInitialDataOptions {
   defaultToCurrentBranch?: boolean;
 }
@@ -71,6 +76,8 @@ export interface PanelStore {
   loading: boolean;
   hasMore: boolean;
   operationInProgress: boolean;
+  /** Most recent host-backed history load failure, cleared by a successful load. */
+  loadError: PanelLoadError | null;
 
   /** Repository and command facade owned by this reusable log surface. */
   actionRepoId: () => string | null;
@@ -289,6 +296,25 @@ function _clearRepoBoundDisplay() {
     collapsedSequenceIds: new Set<string>(),
     collapsedIntermediates: new Map<string, string[]>(),
     pendingSelectionFromFilter: [] as string[],
+    loadError: null as PanelLoadError | null,
+  };
+}
+
+function loadErrorFrom(error: unknown): PanelLoadError {
+  const structured = error as
+    | { code?: unknown; message?: unknown }
+    | null
+    | undefined;
+  const code = structured?.code;
+  const message =
+    typeof structured?.message === "string"
+      ? structured.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return {
+    kind: code === "REPO_NOT_FOUND" ? "repository-unavailable" : "generic",
+    message,
   };
 }
 
@@ -411,6 +437,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     loading: false,
     hasMore: true,
     operationInProgress: false,
+    loadError: null,
 
     actionRepoId: boundRepoId,
     actionRefreshScope:
@@ -533,6 +560,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               currentBranch: current,
               unavailableRef: graphResult.ref,
               hasMore: false,
+              loadError: null,
             });
             return;
           }
@@ -566,6 +594,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
                 hasMore: queryHasMore,
                 unavailableRef: null,
+                loadError: null,
                 selectedCommitHash: validHashes[0],
                 selectedCommitHashes: validHashes,
                 lastSelectedCommitHash: validHashes[0],
@@ -602,6 +631,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
             hasMore: queryHasMore,
             unavailableRef: null,
+            loadError: null,
             selectedCommitHash: firstVisible?.hash ?? null,
             selectedCommitHashes: firstVisible ? [firstVisible.hash] : [],
             lastSelectedCommitHash: firstVisible?.hash ?? null,
@@ -632,6 +662,11 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         } catch (err) {
           if (generation === logLoadGeneration) {
             console.error("fetchInitialData failed:", err);
+            set({
+              ..._clearRepoBoundDisplay(),
+              hasMore: false,
+              loadError: loadErrorFrom(err),
+            });
           }
         } finally {
           const elapsed = Date.now() - start;
@@ -690,7 +725,11 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             "status" in result &&
             result.status === "ref-unavailable"
           ) {
-            set({ unavailableRef: result.ref, hasMore: false });
+            set({
+              unavailableRef: result.ref,
+              hasMore: false,
+              loadError: null,
+            });
             return;
           }
 
@@ -708,13 +747,24 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               hasMore:
                 "status" in result ? result.hasMore : newCommits.length >= 200,
               unavailableRef: null,
+              loadError: null,
             });
           } else {
-            set({ hasMore: false, unavailableRef: null });
+            set({ hasMore: false, unavailableRef: null, loadError: null });
           }
         } catch (err) {
           if (generation === logLoadGeneration) {
             console.error("loadMore failed:", err);
+            const loadError = loadErrorFrom(err);
+            set(
+              loadError.kind === "repository-unavailable"
+                ? {
+                    ..._clearRepoBoundDisplay(),
+                    hasMore: false,
+                    loadError,
+                  }
+                : { loadError },
+            );
           }
         } finally {
           if (generation === logLoadGeneration) set({ loading: false });
