@@ -42,7 +42,9 @@ function serviceFor(repo: string): GitService {
   });
 }
 
-async function createComparisonRepository(): Promise<{
+async function createComparisonRepository(
+  withUnfilteredFeatureCommit = false,
+): Promise<{
   base: string;
   repo: string;
   commonCommitHash: string;
@@ -66,6 +68,21 @@ async function createComparisonRepository(): Promise<{
   const mainCommitHash = await git(repo, "rev-parse", "HEAD");
 
   await git(repo, "checkout", "feature");
+  if (withUnfilteredFeatureCommit) {
+    await fs.writeFile(path.join(repo, "old.txt"), "old\n");
+    await git(repo, "add", "old.txt");
+    await gitWithDates(
+      repo,
+      "2021-01-01T00:00:00Z",
+      "-c",
+      "user.name=Other Author",
+      "-c",
+      "user.email=other@example.com",
+      "commit",
+      "-m",
+      "feature old",
+    );
+  }
   await fs.writeFile(path.join(repo, "feature-only.txt"), "feature\n");
   await git(repo, "add", "feature-only.txt");
   await gitWithDates(
@@ -79,6 +96,21 @@ async function createComparisonRepository(): Promise<{
     "-m",
     "feature only",
   );
+  if (withUnfilteredFeatureCommit) {
+    await fs.writeFile(path.join(repo, "unrelated.txt"), "unrelated\n");
+    await git(repo, "add", "unrelated.txt");
+    await gitWithDates(
+      repo,
+      "2023-01-01T00:00:00Z",
+      "-c",
+      "user.name=Other Author",
+      "-c",
+      "user.email=other@example.com",
+      "commit",
+      "-m",
+      "feature future",
+    );
+  }
   await git(repo, "checkout", "main");
 
   await git(repo, "update-ref", "refs/remotes/origin/main", mainCommitHash);
@@ -130,7 +162,7 @@ describe("GitService structured comparison revisions", () => {
   });
 
   it("applies every log filter within a comparison range", async () => {
-    const { base, repo } = await createComparisonRepository();
+    const { base, repo } = await createComparisonRepository(true);
     try {
       const service = serviceFor(repo);
       const revision = {
@@ -139,17 +171,17 @@ describe("GitService structured comparison revisions", () => {
         includeRef: "refs/heads/feature",
       };
 
-      for (const options of [
-        { search: "feature only" },
-        { author: "Feature Author" },
-        { since: "2021-06-01" },
-        { until: "2022-06-01" },
-        { file: "feature-only.txt" },
+      for (const { options, subjects } of [
+        { options: { search: "feature only" }, subjects: ["feature only"] },
+        { options: { author: "Feature Author" }, subjects: ["feature only"] },
+        { options: { since: "2022-06-01" }, subjects: ["feature future"] },
+        { options: { until: "2021-06-01" }, subjects: ["feature old"] },
+        { options: { file: "feature-only.txt" }, subjects: ["feature only"] },
       ]) {
         const commits = await service.getLog({ revision, ...options });
         assert.deepStrictEqual(
           commits.map((commit) => commit.subject),
-          ["feature only"],
+          subjects,
         );
       }
     } finally {
@@ -168,6 +200,10 @@ describe("GitService structured comparison revisions", () => {
       );
       assert.strictEqual(
         await service.resolveCommitRef("refs/remotes/origin/main"),
+        mainCommitHash,
+      );
+      assert.strictEqual(
+        await service.resolveCommitRef("HEAD"),
         mainCommitHash,
       );
       assert.strictEqual(
@@ -196,6 +232,17 @@ describe("GitService structured comparison revisions", () => {
         }),
       );
       await assert.rejects(service.resolveCommitRef("--all"));
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates operational Git failures while resolving a ref", async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), "jetgit-non-repo-"));
+    try {
+      await assert.rejects(
+        serviceFor(base).resolveCommitRef("refs/heads/main"),
+      );
     } finally {
       await fs.rm(base, { recursive: true, force: true });
     }

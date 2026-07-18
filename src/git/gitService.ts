@@ -183,10 +183,15 @@ export class GitService {
     await this.validateRef(ref);
     try {
       return (
-        await this.execGit(["rev-parse", "--verify", `${ref}^{commit}`])
+        await this.execGit([
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `${ref}^{commit}`,
+        ])
       ).trim();
     } catch (error) {
-      if (typeof (error as { code?: unknown }).code === "number") {
+      if ((error as { code?: unknown }).code === 1) {
         return null;
       }
       throw error;
