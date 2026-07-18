@@ -4,7 +4,7 @@ import { bridge, bridgeWithProgress } from "../../shared/bridge";
 import { Tooltip } from "../../shared/components/Tooltip";
 import { useModifierClickSelection } from "../../shared/hooks/useModifierClickSelection";
 import { usePreventSelect } from "../../shared/hooks/usePreventSelect";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type {
   BranchInfo,
   GitRefIdentity,
@@ -332,19 +332,21 @@ export function BranchTree({
   headerAction?: React.ReactNode;
   onTogglePanel?: () => void;
 } = {}) {
-  const branches = usePanelStore((s) => s.branches);
-  const tags = usePanelStore((s) => s.tags);
-  const commits = usePanelStore((s) => s.commits);
-  const currentBranch = usePanelStore((s) => s.currentBranch);
-  const filter = usePanelStore((s) => s.filter);
-  const setFilter = usePanelStore((s) => s.setFilter);
-  const selectedRefs = usePanelStore((s) => s.selectedRefs);
-  const selectRef = usePanelStore((s) => s.selectRef);
-  const setFavorite = usePanelStore((s) => s.setFavorite);
-  const navigateToRef = usePanelStore((s) => s.navigateToRef);
-  const showTags = usePanelStore((s) => s.showTags);
-  const singleClickAction = usePanelStore((s) => s.singleClickAction);
-  const branchGroupByDirectory = usePanelStore((s) => s.branchGroupByDirectory);
+  const branches = useGitLogStore((s) => s.branches);
+  const tags = useGitLogStore((s) => s.tags);
+  const commits = useGitLogStore((s) => s.commits);
+  const currentBranch = useGitLogStore((s) => s.currentBranch);
+  const filter = useGitLogStore((s) => s.filter);
+  const setFilter = useGitLogStore((s) => s.setFilter);
+  const selectedRefs = useGitLogStore((s) => s.selectedRefs);
+  const selectRef = useGitLogStore((s) => s.selectRef);
+  const setFavorite = useGitLogStore((s) => s.setFavorite);
+  const navigateToRef = useGitLogStore((s) => s.navigateToRef);
+  const showTags = useGitLogStore((s) => s.showTags);
+  const singleClickAction = useGitLogStore((s) => s.singleClickAction);
+  const branchGroupByDirectory = useGitLogStore(
+    (s) => s.branchGroupByDirectory,
+  );
 
   const containerRef = usePreventSelect();
 
@@ -1290,7 +1292,7 @@ function BranchContextMenu({
   onCreateBranch: (startPoint: string, defaultName: string) => void;
   onPush: (branchName: string) => void;
 }) {
-  const setFavorite = usePanelStore((state) => state.setFavorite);
+  const setFavorite = useGitLogStore((state) => state.setFavorite);
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     top: number;

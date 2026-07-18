@@ -5,7 +5,11 @@ import { Tooltip } from "../shared/components/Tooltip";
 import "../shared/components/Tooltip.css";
 import { RepoSwitcher } from "../shared/components/RepoSwitcher";
 import { usePreventSelect } from "../shared/hooks/usePreventSelect";
-import { usePanelStore } from "../shared/store/panel-store";
+import {
+  GitLogStoreProvider,
+  useGitLogStore,
+} from "../shared/store/git-log-store-context";
+import { defaultGitLogStore } from "../shared/store/panel-store";
 import { subscribeRepoEvents, useRepoStore } from "../shared/store/repo-store";
 import { BranchTree } from "./components/BranchTree";
 import { DetailPanel } from "./components/DetailPanel";
@@ -46,13 +50,15 @@ function ProgressBar({ visible }: { visible: boolean }) {
   );
 }
 
-export function PanelApp() {
-  const loading = usePanelStore((s) => s.loading);
-  const operationInProgress = usePanelStore((s) => s.operationInProgress);
-  const fetchInitialData = usePanelStore((s) => s.fetchInitialData);
-  const loadBranchDashboardPreferences = usePanelStore(
+function PanelContent() {
+  const loading = useGitLogStore((s) => s.loading);
+  const operationInProgress = useGitLogStore((s) => s.operationInProgress);
+  const fetchInitialData = useGitLogStore((s) => s.fetchInitialData);
+  const loadBranchDashboardPreferences = useGitLogStore(
     (s) => s.loadBranchDashboardPreferences,
   );
+  const resetForRepoSwitch = useGitLogStore((s) => s.resetForRepoSwitch);
+  const clearForNoRepo = useGitLogStore((s) => s.clearForNoRepo);
   const repos = useRepoStore((s) => s.repos);
 
   const [showLeft, setShowLeft] = useState(true);
@@ -101,13 +107,11 @@ export function PanelApp() {
             // Reset repo-scoped filter (branch/file) so the new repo's Git Log
             // isn't silently scoped to the old repo's branch/path; carryover
             // filters (search/author/date) are preserved by resetForRepoSwitch.
-            usePanelStore.getState().resetForRepoSwitch();
-            void usePanelStore
-              .getState()
-              .fetchInitialData({ defaultToCurrentBranch: true });
+            resetForRepoSwitch();
+            void fetchInitialData({ defaultToCurrentBranch: true });
           } else {
             // No active repo (all removed / none): clear stale repo-bound data.
-            usePanelStore.getState().clearForNoRepo();
+            clearForNoRepo();
           }
         }
       }
@@ -130,7 +134,12 @@ export function PanelApp() {
       disposed = true;
       unsub();
     };
-  }, [fetchInitialData, loadBranchDashboardPreferences]);
+  }, [
+    clearForNoRepo,
+    fetchInitialData,
+    loadBranchDashboardPreferences,
+    resetForRepoSwitch,
+  ]);
 
   return (
     <div
@@ -309,6 +318,14 @@ export function PanelApp() {
         </div>
       </div>
     </div>
+  );
+}
+
+export function PanelApp() {
+  return (
+    <GitLogStoreProvider store={defaultGitLogStore.store}>
+      <PanelContent />
+    </GitLogStoreProvider>
   );
 }
 

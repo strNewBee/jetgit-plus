@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type {
   CollapsibleSequence,
   Commit,
@@ -224,10 +224,13 @@ export function GitGraphSvg({
   height: number;
   topOffset?: number;
 }) {
-  const visibleCommits = usePanelStore((s) => s.visibleCommits);
-  const commits = usePanelStore((s) => s.commits);
-  const graphLayout = usePanelStore((s) => s.graphLayout);
-  const collapsedSequenceIds = usePanelStore((s) => s.collapsedSequenceIds);
+  const visibleCommits = useGitLogStore((s) => s.visibleCommits);
+  const commits = useGitLogStore((s) => s.commits);
+  const graphLayout = useGitLogStore((s) => s.graphLayout);
+  const collapsedSequenceIds = useGitLogStore((s) => s.collapsedSequenceIds);
+  const toggleSequenceCollapse = useGitLogStore(
+    (s) => s.toggleSequenceCollapse,
+  );
 
   const [hoveredSequenceId, setHoveredSequenceId] = useState<string | null>(
     null,
@@ -484,9 +487,7 @@ export function GitGraphSvg({
                 if (line.sequenceId) {
                   const seq = sequencesById[line.sequenceId];
                   if (seq) {
-                    usePanelStore
-                      .getState()
-                      .toggleSequenceCollapse(seq.id, seq.intermediates);
+                    toggleSequenceCollapse(seq.id, seq.intermediates);
                   }
                 }
               }}

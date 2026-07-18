@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 
 export function Toolbar() {
-  const setFilter = usePanelStore((s) => s.setFilter);
-  const filter = usePanelStore((s) => s.filter);
-  const commits = usePanelStore((s) => s.commits);
-  const branches = usePanelStore((s) => s.branches);
-  const currentBranch = usePanelStore((s) => s.currentBranch);
-  const visibleColumns = usePanelStore((s) => s.visibleColumns);
-  const toggleColumnVisibility = usePanelStore((s) => s.toggleColumnVisibility);
+  const setFilter = useGitLogStore((s) => s.setFilter);
+  const filter = useGitLogStore((s) => s.filter);
+  const commits = useGitLogStore((s) => s.commits);
+  const branches = useGitLogStore((s) => s.branches);
+  const currentBranch = useGitLogStore((s) => s.currentBranch);
+  const visibleColumns = useGitLogStore((s) => s.visibleColumns);
+  const toggleColumnVisibility = useGitLogStore(
+    (s) => s.toggleColumnVisibility,
+  );
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const historyBranch = filter.branch || currentBranch;
 

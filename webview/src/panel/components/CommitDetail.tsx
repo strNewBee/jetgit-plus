@@ -1,10 +1,10 @@
 import { CommitInfo } from "../../shared/components/CommitInfo";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit } from "../../shared/types/git";
 
 export function CommitDetail() {
-  const commits = usePanelStore((s) => s.commits);
-  const selectedCommitHashes = usePanelStore((s) => s.selectedCommitHashes);
+  const commits = useGitLogStore((s) => s.commits);
+  const selectedCommitHashes = useGitLogStore((s) => s.selectedCommitHashes);
 
   const selectedCommits = selectedCommitHashes
     .map((h) => commits.find((c) => c.hash === h))

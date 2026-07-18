@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bridge } from "../../shared/bridge";
 import { useModifierClickSelection } from "../../shared/hooks/useModifierClickSelection";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit } from "../../shared/types/git";
 import { CommitContextMenu } from "./CommitContextMenu";
 import {
@@ -30,20 +30,23 @@ export function CommitList({
   onScroll?: (scrollTop: number) => void;
   onHeaderHeight?: (height: number) => void;
 }) {
-  const visibleCommits = usePanelStore((s) => s.visibleCommits);
-  const graphLayout = usePanelStore((s) => s.graphLayout);
-  const hasMore = usePanelStore((s) => s.hasMore);
-  const loadMore = usePanelStore((s) => s.loadMore);
-  const loading = usePanelStore((s) => s.loading);
-  const selectCommit = usePanelStore((s) => s.selectCommit);
-  const scrollTargetHash = usePanelStore((s) => s.scrollTargetHash);
-  const clearScrollTarget = usePanelStore((s) => s.clearScrollTarget);
+  const visibleCommits = useGitLogStore((s) => s.visibleCommits);
+  const graphLayout = useGitLogStore((s) => s.graphLayout);
+  const hasMore = useGitLogStore((s) => s.hasMore);
+  const loadMore = useGitLogStore((s) => s.loadMore);
+  const loading = useGitLogStore((s) => s.loading);
+  const selectCommit = useGitLogStore((s) => s.selectCommit);
+  const scrollTargetHash = useGitLogStore((s) => s.scrollTargetHash);
+  const clearScrollTarget = useGitLogStore((s) => s.clearScrollTarget);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(
     DEFAULT_COLUMN_WIDTHS,
   );
-  const visibleColumns = usePanelStore((s) => s.visibleColumns);
+  const visibleColumns = useGitLogStore((s) => s.visibleColumns);
+  const toggleColumnVisibility = useGitLogStore(
+    (s) => s.toggleColumnVisibility,
+  );
   const [headerMenu, setHeaderMenu] = useState<{
     x: number;
     y: number;
@@ -189,7 +192,7 @@ export function CommitList({
   });
 
   // Keyboard navigation (Arrow Up/Down)
-  const selectedCommitHashes = usePanelStore((s) => s.selectedCommitHashes);
+  const selectedCommitHashes = useGitLogStore((s) => s.selectedCommitHashes);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -405,9 +408,7 @@ export function CommitList({
           x={headerMenu.x}
           y={headerMenu.y}
           visibleColumns={visibleColumns}
-          onToggle={(col) =>
-            usePanelStore.getState().toggleColumnVisibility(col)
-          }
+          onToggle={toggleColumnVisibility}
           onClose={() => setHeaderMenu(null)}
         />
       )}

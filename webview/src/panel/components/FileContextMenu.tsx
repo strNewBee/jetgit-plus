@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bridge, bridgeWithProgress } from "../../shared/bridge";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { DiffFile } from "../../shared/types/git";
 
 // Inline SVG icons for menu items (IntelliJ IDEA style)
@@ -133,8 +133,9 @@ interface FileContextMenuProps {
 
 export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const selectedCommitHash = usePanelStore((s) => s.selectedCommitHash);
-  const openDiffEditor = usePanelStore((s) => s.openDiffEditor);
+  const selectedCommitHash = useGitLogStore((s) => s.selectedCommitHash);
+  const openDiffEditor = useGitLogStore((s) => s.openDiffEditor);
+  const setFilter = useGitLogStore((s) => s.setFilter);
   const [position, setPosition] = useState<{
     top: number;
     left: number;
@@ -297,7 +298,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
 
   const handleHistoryUpToHere = () => {
     onClose();
-    usePanelStore.getState().setFilter({ file: filePath });
+    setFilter({ file: filePath });
   };
 
   const items: {

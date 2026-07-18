@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import type { PropsWithChildren, ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../shared/bridge", () => ({
@@ -11,16 +12,30 @@ vi.mock("../../shared/bridge", () => ({
 }));
 
 const { bridge, bridgeWithProgress } = await import("../../shared/bridge");
-const { usePanelStore } = await import("../../shared/store/panel-store");
+const { GitLogStoreProvider } = await import(
+  "../../shared/store/git-log-store-context"
+);
+const { defaultGitLogStore } = await import("../../shared/store/panel-store");
 const { BranchSidebar } = await import("./BranchSidebar");
+const panelStore = defaultGitLogStore.store;
 
-const originalSetFavorite = usePanelStore.getState().setFavorite;
-const originalNavigateToRef = usePanelStore.getState().navigateToRef;
+const originalSetFavorite = panelStore.getState().setFavorite;
+const originalNavigateToRef = panelStore.getState().navigateToRef;
+
+function StoreWrapper({ children }: PropsWithChildren) {
+  return (
+    <GitLogStoreProvider store={panelStore}>{children}</GitLogStoreProvider>
+  );
+}
+
+function renderWithStore(ui: ReactElement) {
+  return render(ui, { wrapper: StoreWrapper });
+}
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  usePanelStore.setState({
+  panelStore.setState({
     selectedRefs: [],
     branches: [],
     tags: [],
@@ -31,7 +46,7 @@ afterEach(() => {
 
 describe("BranchSidebar ref actions", () => {
   it("updates only a selected local branch through updateBranch", async () => {
-    usePanelStore.setState({
+    panelStore.setState({
       selectedRefs: [
         { type: "local", name: "feature", fullRef: "refs/heads/feature" },
       ],
@@ -46,7 +61,7 @@ describe("BranchSidebar ref actions", () => {
         } as never,
       ],
     });
-    const { getByRole } = render(<BranchSidebar />);
+    const { getByRole } = renderWithStore(<BranchSidebar />);
 
     fireEvent.click(getByRole("button", { name: "Update Selected" }));
 
@@ -58,7 +73,7 @@ describe("BranchSidebar ref actions", () => {
   });
 
   it("disables Update Selected when the local branch has no upstream", () => {
-    usePanelStore.setState({
+    panelStore.setState({
       selectedRefs: [
         { type: "local", name: "feature", fullRef: "refs/heads/feature" },
       ],
@@ -72,7 +87,7 @@ describe("BranchSidebar ref actions", () => {
         } as never,
       ],
     });
-    const { getByRole } = render(<BranchSidebar />);
+    const { getByRole } = renderWithStore(<BranchSidebar />);
 
     const update = getByRole("button", {
       name: "Update Selected",
@@ -93,7 +108,7 @@ describe("BranchSidebar ref actions", () => {
     } as const;
     const setFavorite = vi.fn().mockResolvedValue(undefined);
     const navigateToRef = vi.fn().mockResolvedValue(undefined);
-    usePanelStore.setState({
+    panelStore.setState({
       selectedRefs: [tag],
       tags: [
         {
@@ -106,7 +121,7 @@ describe("BranchSidebar ref actions", () => {
       setFavorite,
       navigateToRef,
     });
-    const { getByRole, queryByRole } = render(<BranchSidebar />);
+    const { getByRole, queryByRole } = renderWithStore(<BranchSidebar />);
 
     expect(
       (getByRole("button", { name: "Update Selected" }) as HTMLButtonElement)

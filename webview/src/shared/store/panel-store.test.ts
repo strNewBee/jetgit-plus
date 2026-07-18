@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Bridge, LogQueryRevision } from "../bridge/types";
 import type { Commit, GitRefIdentity } from "../types/git";
 
 // Capture the event handler registered by panel-store at import time so the
@@ -19,11 +20,13 @@ vi.mock("../bridge", () => ({
 
 // Import after the mock is installed so the module-load onEvent call is captured.
 const {
-  usePanelStore,
+  createGitLogStore,
+  defaultGitLogStore,
   _resetOperationProgressForTests,
   _beginClientOperation,
   _endClientOperation,
 } = await import("./panel-store");
+const usePanelStore = defaultGitLogStore.store;
 const { useRepoStore } = await import("./repo-store");
 const { bridge } = await import("../bridge");
 
@@ -64,6 +67,221 @@ function graphResult(commits: Commit[]) {
     snapshot: { activeLanes: [], laneColors: [], nextColorIndex: 0 },
   };
 }
+
+function createFakeBridge(
+  request: Bridge["request"] = vi.fn().mockResolvedValue([]),
+) {
+  const handlers = new Set<(event: string, data: unknown) => void>();
+  const unsubscribe = vi.fn();
+  const fakeBridge: Bridge = {
+    request,
+    onEvent: vi.fn((handler) => {
+      handlers.add(handler);
+      return () => {
+        handlers.delete(handler);
+        unsubscribe();
+      };
+    }),
+    setRepoContext: vi.fn(),
+  };
+  return { bridge: fakeBridge, handlers, unsubscribe };
+}
+
+function comparisonHistory(revision: LogQueryRevision) {
+  return { kind: "comparison" as const, revision };
+}
+
+describe("git log store instances", () => {
+  it("keeps mutations and async graph results isolated", async () => {
+    const topRange: LogQueryRevision = {
+      kind: "ref",
+      ref: { type: "local", name: "top", fullRef: "refs/heads/top" },
+    };
+    const bottomRange: LogQueryRevision = {
+      kind: "ref",
+      ref: {
+        type: "local",
+        name: "bottom",
+        fullRef: "refs/heads/bottom",
+      },
+    };
+    const { bridge: fakeBridge } = createFakeBridge(
+      vi.fn(async (command, params) => {
+        if (command === "getGraphData") {
+          const revision = (params as { revision?: LogQueryRevision }).revision;
+          return graphResult([
+            commit(revision === topRange ? "top-result" : "bottom-result"),
+          ]);
+        }
+        if (command === "getBranches" || command === "getTags") return [];
+        if (command === "getCommitRangeFiles") return [];
+        return null;
+      }),
+    );
+    const top = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory(topRange),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+    const bottom = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory(bottomRange),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    top.store.getState().setFilter({ searchQuery: "top" });
+    expect(bottom.store.getState().filter.searchQuery).toBe("");
+    void top.store.getState().selectCommit("a", "single", ["a"]);
+    expect(bottom.store.getState().selectedCommitHashes).toEqual([]);
+
+    await Promise.all([
+      top.store.getState().fetchInitialData(),
+      bottom.store.getState().fetchInitialData(),
+    ]);
+
+    expect(top.store.getState().commits.map(({ hash }) => hash)).toEqual([
+      "top-result",
+    ]);
+    expect(bottom.store.getState().commits.map(({ hash }) => hash)).toEqual([
+      "bottom-result",
+    ]);
+    top.dispose();
+    bottom.dispose();
+  });
+
+  it("rejects a stale graph response after a newer filter intent", async () => {
+    const older = deferred<ReturnType<typeof graphResult>>();
+    const newer = deferred<ReturnType<typeof graphResult>>();
+    const { bridge: fakeBridge } = createFakeBridge(
+      vi.fn(async (command, params) => {
+        if (command === "getGraphData") {
+          return (params as { branch?: string }).branch === "branch-a"
+            ? older.promise
+            : newer.promise;
+        }
+        if (command === "getBranches" || command === "getTags") return [];
+        if (command === "getCommitRangeFiles") return [];
+        return null;
+      }),
+    );
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    instance.store.setState((state) => ({
+      filter: { ...state.filter, branch: "branch-a" },
+    }));
+    const first = instance.store.getState().fetchInitialData();
+    instance.store.setState((state) => ({
+      filter: { ...state.filter, branch: "branch-b" },
+    }));
+    const second = instance.store.getState().fetchInitialData();
+
+    newer.resolve(graphResult([commit("branch-b-tip")]));
+    await vi.waitFor(() => {
+      expect(instance.store.getState().commits[0]?.hash).toBe("branch-b-tip");
+    });
+    older.resolve(graphResult([commit("branch-a-tip")]));
+    await Promise.all([first, second]);
+
+    expect(instance.store.getState().filter.branch).toBe("branch-b");
+    expect(instance.store.getState().commits.map(({ hash }) => hash)).toEqual([
+      "branch-b-tip",
+    ]);
+    instance.dispose();
+  });
+
+  it("releases its event subscription exactly once when disposed", () => {
+    const fake = createFakeBridge();
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+
+    expect(fake.handlers.size).toBe(1);
+    instance.dispose();
+    instance.dispose();
+
+    expect(fake.handlers.size).toBe(0);
+    expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses tagged query hasMore and exposes an unavailable revision", async () => {
+    const revisionRef: GitRefIdentity = {
+      type: "local",
+      name: "feature",
+      fullRef: "refs/heads/feature",
+    };
+    let unavailable = false;
+    const { bridge: fakeBridge } = createFakeBridge(
+      vi.fn(async (command) => {
+        if (command === "getGraphData") {
+          return unavailable
+            ? { status: "ref-unavailable", ref: revisionRef }
+            : {
+                status: "ok",
+                ...graphResult([commit("feature-tip")]),
+                hasMore: true,
+              };
+        }
+        if (command === "getBranches" || command === "getTags") return [];
+        if (command === "getCommitRangeFiles") return [];
+        return null;
+      }),
+    );
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({ kind: "ref", ref: revisionRef }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    await instance.store.getState().fetchInitialData();
+    expect(instance.store.getState().hasMore).toBe(true);
+    expect(instance.store.getState().unavailableRef).toBeNull();
+
+    unavailable = true;
+    await instance.store.getState().refresh();
+
+    expect(instance.store.getState().unavailableRef).toEqual(revisionRef);
+    expect(instance.store.getState().commits).toEqual([]);
+    expect(instance.store.getState().hasMore).toBe(false);
+    instance.dispose();
+  });
+
+  it("ignores global file-history events in a fixed ordinary store", () => {
+    const fake = createFakeBridge();
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+
+    for (const handler of fake.handlers) {
+      handler("showFileHistory", { file: "src/a.ts" });
+    }
+    const fileFilter = instance.store.getState().filter.file;
+    const requestCount = vi.mocked(fake.bridge.request).mock.calls.length;
+    instance.dispose();
+
+    expect(fileFilter).toBe("");
+    expect(requestCount).toBe(0);
+  });
+});
 
 describe("panel-store operationInProgress per-repo filter", () => {
   beforeEach(() => {

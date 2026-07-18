@@ -4,16 +4,16 @@ import CodiconListTree from "~icons/codicon/list-tree";
 import { FileTree } from "../../shared/components/FileTree";
 import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { DiffFile } from "../../shared/types/git";
 import { FileContextMenu } from "./FileContextMenu";
 
 export function FileChangeTree() {
-  const commitFiles = usePanelStore((s) => s.commitFiles);
-  const selectedFilePath = usePanelStore((s) => s.selectedFilePath);
-  const selectedCommitHash = usePanelStore((s) => s.selectedCommitHash);
-  const selectFile = usePanelStore((s) => s.selectFile);
-  const openDiffEditor = usePanelStore((s) => s.openDiffEditor);
+  const commitFiles = useGitLogStore((s) => s.commitFiles);
+  const selectedFilePath = useGitLogStore((s) => s.selectedFilePath);
+  const selectedCommitHash = useGitLogStore((s) => s.selectedCommitHash);
+  const selectFile = useGitLogStore((s) => s.selectFile);
+  const openDiffEditor = useGitLogStore((s) => s.openDiffEditor);
   const lastClickRef = useRef<{ path: string; time: number }>({
     path: "",
     time: 0,
@@ -61,7 +61,7 @@ export function FileChangeTree() {
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const filter = usePanelStore((s) => s.filter);
+  const filter = useGitLogStore((s) => s.filter);
 
   // When file filter is active, only show that file
   const displayFiles = filter.file

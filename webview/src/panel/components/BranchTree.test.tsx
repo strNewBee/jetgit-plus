@@ -5,6 +5,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { PropsWithChildren, ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../shared/bridge", () => ({
@@ -16,14 +17,28 @@ vi.mock("../../shared/bridge", () => ({
   bridgeWithProgress: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { usePanelStore } = await import("../../shared/store/panel-store");
+const { GitLogStoreProvider } = await import(
+  "../../shared/store/git-log-store-context"
+);
+const { defaultGitLogStore } = await import("../../shared/store/panel-store");
 const { bridgeWithProgress } = await import("../../shared/bridge");
 const { BranchTree } = await import("./BranchTree");
+const panelStore = defaultGitLogStore.store;
 
-const originalState = usePanelStore.getState();
+const originalState = panelStore.getState();
+
+function StoreWrapper({ children }: PropsWithChildren) {
+  return (
+    <GitLogStoreProvider store={panelStore}>{children}</GitLogStoreProvider>
+  );
+}
+
+function renderWithStore(ui: ReactElement) {
+  return render(ui, { wrapper: StoreWrapper });
+}
 
 function seedTree(showTags = true) {
-  usePanelStore.setState({
+  panelStore.setState({
     branches: [
       {
         name: "main",
@@ -94,7 +109,7 @@ function seedTree(showTags = true) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  usePanelStore.setState({
+  panelStore.setState({
     ...originalState,
     branches: [],
     tags: [],
@@ -108,12 +123,14 @@ describe("BranchTree unified refs", () => {
     seedTree(false);
     const selectRef = vi.fn();
     const setFilter = vi.fn();
-    usePanelStore.setState({ selectRef, setFilter });
-    const { queryByText, rerender, getByText } = render(<BranchTree />);
+    panelStore.setState({ selectRef, setFilter });
+    const { queryByText, rerender, getByText } = renderWithStore(
+      <BranchTree />,
+    );
 
     expect(queryByText("Tags")).toBeNull();
 
-    usePanelStore.setState({ showTags: true });
+    panelStore.setState({ showTags: true });
     rerender(<BranchTree />);
     fireEvent.click(getByText("v1.0.0"));
 
@@ -128,7 +145,7 @@ describe("BranchTree unified refs", () => {
 
   it("renders one prioritized status icon for current, favorite, and ordinary refs", () => {
     seedTree(true);
-    const { getByText } = render(<BranchTree />);
+    const { getByText } = renderWithStore(<BranchTree />);
 
     const iconFor = (name: string) => {
       const row = getByText(name).closest(".selectable-row");
@@ -152,8 +169,8 @@ describe("BranchTree unified refs", () => {
 
   it("uses compact fixed heights for ref and directory rows", () => {
     seedTree(true);
-    usePanelStore.setState({ branchGroupByDirectory: true });
-    const { getByText } = render(<BranchTree />);
+    panelStore.setState({ branchGroupByDirectory: true });
+    const { getByText } = renderWithStore(<BranchTree />);
 
     const branchRow = getByText("plain").closest(".selectable-row");
     expect((branchRow as HTMLElement).style.height).toBe("22px");
@@ -173,7 +190,7 @@ describe("BranchTree unified refs", () => {
   it("keeps a long current branch label inside its fixed-height row", () => {
     seedTree(true);
     const longBranch = "feat/0.5.1-branch-ux-reliability";
-    usePanelStore.setState({
+    panelStore.setState({
       branches: [
         {
           name: longBranch,
@@ -189,7 +206,7 @@ describe("BranchTree unified refs", () => {
       currentBranch: longBranch,
     });
     const label = `Current Branch: ${longBranch}`;
-    const { getByText } = render(<BranchTree />);
+    const { getByText } = renderWithStore(<BranchTree />);
 
     const row = getByText(label) as HTMLElement;
     expect(row.style.height).toBe("24px");
@@ -203,8 +220,8 @@ describe("BranchTree unified refs", () => {
     seedTree(true);
     const selectRef = vi.fn();
     const setFilter = vi.fn();
-    usePanelStore.setState({ selectRef, setFilter });
-    const { getByRole } = render(<BranchTree />);
+    panelStore.setState({ selectRef, setFilter });
+    const { getByRole } = renderWithStore(<BranchTree />);
 
     const row = getByRole("treeitem", { name: /main/i });
     fireEvent.keyDown(row, { key: "Enter" });
@@ -220,8 +237,8 @@ describe("BranchTree unified refs", () => {
   it("offers Mark/Unmark as Favorite from a tag context menu", async () => {
     seedTree(true);
     const setFavorite = vi.fn().mockResolvedValue(undefined);
-    usePanelStore.setState({ setFavorite });
-    const { getByText } = render(<BranchTree />);
+    panelStore.setState({ setFavorite });
+    const { getByText } = renderWithStore(<BranchTree />);
 
     fireEvent.contextMenu(getByText("v1.0.0"), {
       clientX: 20,
@@ -243,7 +260,7 @@ describe("BranchTree unified refs", () => {
 
   it("disables Update in the branch context menu when upstream is missing", () => {
     seedTree(true);
-    const { getByText, getByLabelText } = render(<BranchTree />);
+    const { getByText, getByLabelText } = renderWithStore(<BranchTree />);
 
     fireEvent.contextMenu(getByText("feature/plain"), {
       clientX: 20,
@@ -263,8 +280,8 @@ describe("BranchTree unified refs", () => {
   it("does not toggle the configured single-click action back on a double click", () => {
     seedTree(true);
     const setFilter = vi.fn();
-    usePanelStore.setState({ setFilter });
-    const { getByText } = render(<BranchTree />);
+    panelStore.setState({ setFilter });
+    const { getByText } = renderWithStore(<BranchTree />);
     const tag = getByText("v1.0.0");
 
     fireEvent.click(tag, { detail: 1 });

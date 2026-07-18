@@ -1,6 +1,6 @@
 import { Tooltip } from "../../shared/components/Tooltip";
 import { usePreventSelect } from "../../shared/hooks/usePreventSelect";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit, LaneInfo, RefInfo } from "../../shared/types/git";
 
 export const ROW_HEIGHT = 28;
@@ -174,8 +174,8 @@ export function CommitRow({
   onCommitClick: (event: React.MouseEvent, hash: string) => void;
   onContextMenu?: (event: React.MouseEvent, commit: Commit) => void;
 }) {
-  const selectedCommitHashes = usePanelStore((s) => s.selectedCommitHashes);
-  const setHoveredColumn = usePanelStore((s) => s.setHoveredColumn);
+  const selectedCommitHashes = useGitLogStore((s) => s.selectedCommitHashes);
+  const setHoveredColumn = useGitLogStore((s) => s.setHoveredColumn);
   const rowRef = usePreventSelect<HTMLDivElement>();
 
   const isSelected = selectedCommitHashes.includes(commit.hash);

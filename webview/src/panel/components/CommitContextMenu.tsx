@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bridge, bridgeWithProgress } from "../../shared/bridge";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit } from "../../shared/types/git";
 
 // IntelliJ-style icons for commit context menu
@@ -99,7 +99,7 @@ export function CommitContextMenu({
   onCreateBranch,
 }: CommitContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const currentBranch = usePanelStore((s) => s.currentBranch);
+  const currentBranch = useGitLogStore((s) => s.currentBranch);
   const [position, setPosition] = useState<{
     top: number;
     left: number;
@@ -329,13 +329,14 @@ export function CommitContextMenu({
     }
   };
 
-  const filter = usePanelStore((s) => s.filter);
-  const selectCommit = usePanelStore((s) => s.selectCommit);
+  const filter = useGitLogStore((s) => s.filter);
+  const selectCommit = useGitLogStore((s) => s.selectCommit);
+  const setFilter = useGitLogStore((s) => s.setFilter);
 
   const handleShowInGitLog = () => {
     onClose();
     // Clear file filter and select this commit in the full log
-    usePanelStore.getState().setFilter({ file: "" });
+    setFilter({ file: "" });
     // After refresh, select this commit
     setTimeout(() => {
       selectCommit(commit.hash);

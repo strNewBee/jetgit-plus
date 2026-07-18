@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { bridge, bridgeWithProgress } from "../../shared/bridge";
 import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
-import { usePanelStore } from "../../shared/store/panel-store";
+import { useGitLogStore } from "../../shared/store/git-log-store-context";
 
 export function BranchSidebar({
   onTogglePanel,
@@ -11,11 +11,11 @@ export function BranchSidebar({
   onTogglePanel?: () => void;
   onNewBranch?: () => void;
 } = {}) {
-  const selectedRefs = usePanelStore((s) => s.selectedRefs);
-  const branches = usePanelStore((s) => s.branches);
-  const tags = usePanelStore((s) => s.tags);
-  const setFavorite = usePanelStore((s) => s.setFavorite);
-  const navigateToRef = usePanelStore((s) => s.navigateToRef);
+  const selectedRefs = useGitLogStore((s) => s.selectedRefs);
+  const branches = useGitLogStore((s) => s.branches);
+  const tags = useGitLogStore((s) => s.tags);
+  const setFavorite = useGitLogStore((s) => s.setFavorite);
+  const navigateToRef = useGitLogStore((s) => s.navigateToRef);
   const selectedRef = selectedRefs.length === 1 ? selectedRefs[0] : null;
   const selectedBranch = selectedRef
     ? branches.find(
@@ -34,8 +34,10 @@ export function BranchSidebar({
     selectedBranch?.isFavorite ?? selectedTag?.isFavorite;
   const selectedTargetHash =
     selectedBranch?.lastCommitHash ?? selectedTag?.targetCommitHash;
-  const branchGroupByDirectory = usePanelStore((s) => s.branchGroupByDirectory);
-  const toggleBranchGroupByDirectory = usePanelStore(
+  const branchGroupByDirectory = useGitLogStore(
+    (s) => s.branchGroupByDirectory,
+  );
+  const toggleBranchGroupByDirectory = useGitLogStore(
     (s) => s.toggleBranchGroupByDirectory,
   );
 
@@ -250,9 +252,9 @@ function SettingsButton() {
 }
 
 function SettingsMenu({ onClose }: { onClose: () => void }) {
-  const showTags = usePanelStore((state) => state.showTags);
-  const singleClickAction = usePanelStore((state) => state.singleClickAction);
-  const setPreferences = usePanelStore(
+  const showTags = useGitLogStore((state) => state.showTags);
+  const singleClickAction = useGitLogStore((state) => state.singleClickAction);
+  const setPreferences = useGitLogStore(
     (state) => state.setBranchDashboardPreferences,
   );
   const menuRef = useCallback(
