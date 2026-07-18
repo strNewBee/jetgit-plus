@@ -48,7 +48,7 @@ export interface GraphLayoutResult {
   snapshot: LaneSnapshot;
 }
 
-export type GitRefType = "local" | "remote" | "tag";
+export type GitRefType = "local" | "remote" | "tag" | "detached";
 
 export interface GitRefIdentity {
   type: GitRefType;

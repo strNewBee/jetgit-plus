@@ -1,4 +1,4 @@
-export type GitRefType = "local" | "remote" | "tag";
+export type GitRefType = "local" | "remote" | "tag" | "detached";
 
 export interface GitRefIdentity {
   type: GitRefType;
@@ -32,6 +32,7 @@ const DEFAULT_FAVORITES: Readonly<Record<GitRefType, ReadonlySet<string>>> = {
   local: new Set(["main", "master"]),
   remote: new Set(["origin/main", "origin/master"]),
   tag: new Set(),
+  detached: new Set(),
 };
 
 export class BranchDashboardStateStore {

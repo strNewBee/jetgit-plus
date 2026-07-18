@@ -29,6 +29,7 @@ const mode = root.dataset.mode as
   | "commit"
   | "push"
   | "rollback"
+  | "compare"
   | undefined;
 
 // Initialize the bridge's repo context from the host-supplied data-repo-id
@@ -48,8 +49,15 @@ createRoot(root).render(
       <PushApp />
     ) : mode === "rollback" ? (
       <RollbackApp />
+    ) : mode === "compare" ? (
+      // Task 7 replaces this isolated mount with CompareApp.
+      <ComparePlaceholder />
     ) : (
       <PanelApp />
     )}
   </StrictMode>,
 );
+
+function ComparePlaceholder() {
+  return null;
+}

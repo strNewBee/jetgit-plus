@@ -24,6 +24,10 @@ import { registerLogHandlers } from "./messages/logHandlers";
 import { MessageRouter } from "./messages/messageRouter";
 import { ErrorCode } from "./messages/protocol";
 import { CommitViewProvider } from "./views/commitViewProvider";
+import {
+  ComparePanelManager,
+  registerComparePanelHandlers,
+} from "./views/comparePanelManager";
 import { ConflictsManager } from "./views/conflictsManager";
 import { DiffEditorManager } from "./views/diffEditorManager";
 import {
@@ -160,6 +164,10 @@ export async function activate(context: vscode.ExtensionContext) {
     context.extensionUri,
     messageRouter,
     repoRegistry,
+  );
+  const comparePanelManager = new ComparePanelManager(
+    context.extensionUri,
+    messageRouter,
   );
 
   // 4. PushPanel
@@ -339,6 +347,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // If GitService is unavailable, handlers return { status: 'not_git_repo' }
 
   registerLogHandlers(messageRouter);
+  registerComparePanelHandlers(messageRouter, comparePanelManager);
 
   messageRouter.handle("openMergeEditor", async (params, ctx) => {
     if (!ctx) return NOT_GIT_REPO;

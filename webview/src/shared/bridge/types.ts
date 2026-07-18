@@ -60,7 +60,7 @@ export interface ResponseMessage {
 
 export interface EventMessage {
   type: "event";
-  event: string;
+  event: EventType;
   data: unknown;
 }
 
@@ -167,8 +167,24 @@ export type CommandType =
   | "openRollbackPanel"
   | "executeRollback"
   | "closeRollbackPanel"
+  | "openCompareWithCurrent"
   | "getRepos"
   | "selectRepo";
+
+export type EventType =
+  | "gitStateChanged"
+  | "mergeStateChanged"
+  | "themeChanged"
+  | "showFileHistory"
+  | "operationStart"
+  | "operationEnd"
+  | "commitStateChanged"
+  | "pushPanelInit"
+  | "conflictsPanelInit"
+  | "rollbackPanelInit"
+  | "comparePanelRefresh"
+  | "activeRepoChanged"
+  | "reposChanged";
 
 /**
  * Request scope. "repo" (default) binds the call to the active repo context;

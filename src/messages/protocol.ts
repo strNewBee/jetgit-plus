@@ -171,6 +171,7 @@ export type CommandType =
   | "openRollbackPanel"
   | "executeRollback"
   | "closeRollbackPanel"
+  | "openCompareWithCurrent"
   | "getRepos"
   | "selectRepo";
 
@@ -182,7 +183,10 @@ export type EventType =
   | "operationStart"
   | "operationEnd"
   | "commitStateChanged"
+  | "pushPanelInit"
+  | "conflictsPanelInit"
   | "rollbackPanelInit"
+  | "comparePanelRefresh"
   | "activeRepoChanged"
   | "reposChanged";
 

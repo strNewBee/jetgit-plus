@@ -114,7 +114,7 @@ async function resolveRevision(
 function assertRefIdentity(ref: GitRefIdentity): void {
   if (
     !ref ||
-    !["local", "remote", "tag"].includes(ref.type) ||
+    !["local", "remote", "tag", "detached"].includes(ref.type) ||
     typeof ref.name !== "string" ||
     !ref.name ||
     typeof ref.fullRef !== "string" ||
