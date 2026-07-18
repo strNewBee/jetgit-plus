@@ -199,6 +199,35 @@ describe("GitService structured comparison revisions", () => {
     }
   });
 
+  it("keeps the log usable when the current ref disappears during reachability loading", async () => {
+    const { base, repo } = await createComparisonRepository();
+    try {
+      class MissingCurrentRefGitService extends GitService {
+        override resolveCommitRef(ref: string): Promise<string | null> {
+          if (ref === "refs/heads/vanished") return Promise.resolve(null);
+          return super.resolveCommitRef(ref);
+        }
+      }
+      const service = new MissingCurrentRefGitService({
+        workTreeRoot: repo,
+        gitDir: path.join(repo, ".git"),
+        commonDir: path.join(repo, ".git"),
+      });
+
+      const result = await service.getLogWithReachability(
+        { revision: { kind: "all" }, maxCount: 200 },
+        "refs/heads/vanished",
+      );
+
+      assert.ok(result.length > 0);
+      assert.ok(
+        result.every((commit) => commit.reachableFromCurrent === false),
+      );
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
   it("shares an in-flight reachability load and replaces it after the tip moves", async () => {
     const { base, repo, commonCommitHash, mainCommitHash } =
       await createComparisonRepository();

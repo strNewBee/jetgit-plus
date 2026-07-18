@@ -237,7 +237,10 @@ export class GitService {
   private async getReachableHashes(ref: string): Promise<Set<string>> {
     const tip = await this.resolveCommitRef(ref);
     if (!tip) {
-      throw new Error(`Git ref is unavailable: ${ref}`);
+      // Reachability only decorates log rows. If the checked-out ref vanishes
+      // between the handler's availability check and this second resolution,
+      // keep the log usable and temporarily render every commit as unreachable.
+      return new Set();
     }
 
     const cached = this.reachabilityCache;

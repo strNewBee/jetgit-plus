@@ -10,3 +10,4 @@ node_modules
 *.vsix
 webview/node_modules
 docs/superpowers/
+.superpowers/
