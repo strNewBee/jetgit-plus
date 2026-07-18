@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
       | "ref-unavailable"
       | "repo-not-found"
       | "generic-error",
+    omitTopSecond: false,
   };
 
   const commit = (hash: string, subject: string) => ({
@@ -35,7 +36,20 @@ const mocks = vi.hoisted(() => {
 
   const request = vi.fn(
     async (command: string, params: Record<string, unknown> = {}) => {
-      if (command === "getBranches") return [];
+      if (command === "getBranches") {
+        return [
+          {
+            name: "main",
+            fullRef: "refs/heads/main",
+            isRemote: false,
+            isCurrent: true,
+            isFavorite: false,
+            ahead: 0,
+            behind: 0,
+            lastCommitHash: "bottom-1",
+          },
+        ];
+      }
       if (command === "getTags" || command === "getCommitRangeFiles") {
         return [];
       }
@@ -73,7 +87,9 @@ const mocks = vi.hoisted(() => {
         state.graphMode === "empty" || params.search
           ? []
           : isTop
-            ? [commit("top-1", "Top first"), commit("top-2", "Top second")]
+            ? state.omitTopSecond
+              ? [commit("top-1", "Top first")]
+              : [commit("top-1", "Top first"), commit("top-2", "Top second")]
             : [
                 commit("bottom-1", "Bottom first"),
                 commit("bottom-2", "Bottom second"),
@@ -256,6 +272,7 @@ describe("CompareApp", () => {
   beforeEach(() => {
     seedRoot();
     mocks.state.graphMode = "data";
+    mocks.state.omitTopSecond = false;
     mocks.request.mockClear();
     mocks.onEvent.mockClear();
     mocks.eventListeners.clear();
@@ -289,6 +306,8 @@ describe("CompareApp", () => {
       }),
       options: { repoId: "repo-a" },
     });
+    expect(requests[0]?.params).not.toHaveProperty("currentRef");
+    expect(requests[1]?.params).not.toHaveProperty("currentRef");
 
     const top = view.getByTestId("compare-top");
     const bottom = view.getByTestId("compare-bottom");
@@ -315,6 +334,9 @@ describe("CompareApp", () => {
     fireEvent.change(within(top).getByRole("textbox", { name: /search/i }), {
       target: { value: "top only" },
     });
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("No selection"),
+    ).toBeTruthy();
     await waitFor(() => expect(graphRequests()).toHaveLength(1));
     expect(graphRequests()[0]?.params).toEqual(
       expect.objectContaining({ search: "top only" }),
@@ -324,6 +346,52 @@ describe("CompareApp", () => {
         name: /search/i,
       }).value,
     ).toBe("");
+  });
+
+  it("preserves valid inspectors across every comparison refresh and clears removed selections", async () => {
+    const view = await renderLoaded();
+    const top = view.getByTestId("compare-top");
+    fireEvent.click(within(top).getByRole("button", { name: "Top second" }));
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId("compare-top-detail")).getByText("Top second"),
+      ).toBeTruthy(),
+    );
+
+    mocks.request.mockClear();
+    emit("comparePanelRefresh");
+    await waitFor(() => expect(graphRequests()).toHaveLength(2));
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("Top second"),
+    ).toBeTruthy();
+
+    mocks.request.mockClear();
+    emit("gitStateChanged", { repoId: "repo-a" });
+    await waitFor(() => expect(graphRequests()).toHaveLength(2));
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("Top second"),
+    ).toBeTruthy();
+
+    mocks.request.mockClear();
+    fireEvent.click(
+      within(view.getByTestId("compare-bottom")).getByRole("button", {
+        name: "Refresh comparison",
+      }),
+    );
+    await waitFor(() => expect(graphRequests()).toHaveLength(2));
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("Top second"),
+    ).toBeTruthy();
+
+    mocks.state.omitTopSecond = true;
+    emit("comparePanelRefresh");
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId("compare-top-detail")).getByText(
+          "No selection",
+        ),
+      ).toBeTruthy(),
+    );
   });
 
   it("refreshes both ranges with retained filters and ignores other repositories", async () => {

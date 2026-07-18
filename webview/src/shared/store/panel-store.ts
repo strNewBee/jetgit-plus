@@ -34,6 +34,11 @@ export interface PanelLoadError {
 
 export interface FetchInitialDataOptions {
   defaultToCurrentBranch?: boolean;
+  preserveSelection?: boolean;
+}
+
+export interface RefreshOptions {
+  preserveSelection?: boolean;
 }
 
 export interface PanelStore {
@@ -121,7 +126,7 @@ export interface PanelStore {
   toggleColumnVisibility: (column: "author" | "date" | "hash") => void;
   toggleSequenceCollapse: (sequenceId: string, intermediates: string[]) => void;
   toggleBranchGroupByDirectory: () => void;
-  refresh: () => Promise<void>;
+  refresh: (options?: RefreshOptions) => Promise<void>;
   /**
    * Reset the repo-SCOPED parts of `filter` (`branch`, `file`) before fetching
    * for a newly-active repo, WITHOUT touching the carryover (global-scope)
@@ -465,6 +470,18 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
     async fetchInitialData(fetchOptions = {}) {
       const generation = ++logLoadGeneration;
+      const currentSelection = get();
+      const selectionToPreserve =
+        fetchOptions.preserveSelection &&
+        currentSelection.selectedCommitHashes.length > 0
+          ? {
+              selectedCommitHash: currentSelection.selectedCommitHash,
+              selectedCommitHashes: [...currentSelection.selectedCommitHashes],
+              lastSelectedCommitHash: currentSelection.lastSelectedCommitHash,
+              commitFiles: [...currentSelection.commitFiles],
+              selectedFilePath: currentSelection.selectedFilePath,
+            }
+          : null;
       if (fetchOptions.defaultToCurrentBranch && !get().filter.branch) {
         pendingDefaultBranchInitialization = true;
       }
@@ -616,6 +633,95 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               }
               return;
             }
+          }
+
+          if (selectionToPreserve) {
+            const commitHashes = new Set(commits.map((commit) => commit.hash));
+            const validHashes = selectionToPreserve.selectedCommitHashes.filter(
+              (hash) => commitHashes.has(hash),
+            );
+            const validSet = new Set(validHashes);
+            const orderedHashes = visible
+              .map((commit) => commit.hash)
+              .filter((hash) => validSet.has(hash));
+
+            if (validHashes.length === 0) {
+              set({
+                commits,
+                visibleCommits: visible,
+                graphLayout: lanes,
+                laneSnapshot: snapshot,
+                branches: branchList,
+                tags: tagList,
+                currentBranch: current,
+                hasMore: queryHasMore,
+                unavailableRef: null,
+                loadError: null,
+                selectedCommitHash: null,
+                selectedCommitHashes: [],
+                lastSelectedCommitHash: null,
+                commitFiles: [],
+                selectedFilePath: null,
+                rangeOldest: null,
+                rangeNewest: null,
+                pendingSelectionFromFilter: [],
+              });
+              return;
+            }
+
+            const selectedCommitHash =
+              selectionToPreserve.selectedCommitHash &&
+              validSet.has(selectionToPreserve.selectedCommitHash)
+                ? selectionToPreserve.selectedCommitHash
+                : orderedHashes[0];
+            const lastSelectedCommitHash =
+              selectionToPreserve.lastSelectedCommitHash &&
+              validSet.has(selectionToPreserve.lastSelectedCommitHash)
+                ? selectionToPreserve.lastSelectedCommitHash
+                : orderedHashes[0];
+            const fileGeneration = ++selectionGeneration;
+            set({
+              commits,
+              visibleCommits: visible,
+              graphLayout: lanes,
+              laneSnapshot: snapshot,
+              branches: branchList,
+              tags: tagList,
+              currentBranch: current,
+              hasMore: queryHasMore,
+              unavailableRef: null,
+              loadError: null,
+              selectedCommitHash,
+              selectedCommitHashes: validHashes,
+              lastSelectedCommitHash,
+              commitFiles: selectionToPreserve.commitFiles,
+              selectedFilePath: selectionToPreserve.selectedFilePath,
+              rangeOldest: orderedHashes[orderedHashes.length - 1],
+              rangeNewest: orderedHashes[0],
+              pendingSelectionFromFilter: [],
+            });
+
+            const files = (await request("getCommitRangeFiles", {
+              hashes: orderedHashes,
+            })) as DiffFile[] | null;
+            if (
+              generation === logLoadGeneration &&
+              fileGeneration === selectionGeneration
+            ) {
+              const nextFiles = files ?? [];
+              const preservedFile = selectionToPreserve.selectedFilePath;
+              set({
+                commitFiles: nextFiles,
+                selectedFilePath:
+                  preservedFile &&
+                  nextFiles.some(
+                    (file) => (file.newPath || file.oldPath) === preservedFile,
+                  )
+                    ? preservedFile
+                    : null,
+              });
+            }
+            return;
           }
 
           const firstVisible = visible[0];
@@ -1177,12 +1283,14 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
       }
     },
 
-    async refresh() {
+    async refresh(refreshOptions = {}) {
       set({
         collapsedSequenceIds: new Set(),
         collapsedIntermediates: new Map(),
       });
-      await get().fetchInitialData();
+      await get().fetchInitialData({
+        preserveSelection: refreshOptions.preserveSelection,
+      });
     },
 
     resetForRepoSwitch() {
@@ -1268,7 +1376,9 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     if (event === "gitStateChanged") {
       const { repoId } = data as { repoId?: string };
       if (!repoId || repoId === visibleRepoId()) {
-        void store.getState().refresh();
+        void store.getState().refresh({
+          preserveSelection: options.history.kind === "comparison",
+        });
       }
     }
     if (

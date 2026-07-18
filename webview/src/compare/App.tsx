@@ -83,7 +83,7 @@ export function CompareApp() {
         },
       },
       followGlobalActiveRepo: false,
-      showCurrentReachability: true,
+      showCurrentReachability: false,
       bridge,
     });
     const bottom = createGitLogStore({
@@ -97,13 +97,13 @@ export function CompareApp() {
         },
       },
       followGlobalActiveRepo: false,
-      showCurrentReachability: true,
+      showCurrentReachability: false,
       bridge,
     });
     const refreshBoth = async () => {
       await Promise.all([
-        top.store.getState().refresh(),
-        bottom.store.getState().refresh(),
+        top.store.getState().refresh({ preserveSelection: true }),
+        bottom.store.getState().refresh({ preserveSelection: true }),
       ]);
     };
     const unsubscribe = bridge.onEvent((event) => {

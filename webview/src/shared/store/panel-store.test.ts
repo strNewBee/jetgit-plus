@@ -246,6 +246,70 @@ describe("git log store instances", () => {
     bottom.dispose();
   });
 
+  it("preserves valid selection and inspector state while pruning removed hashes on explicit refresh", async () => {
+    let refreshedCommits = [commit("a"), commit("b")];
+    const refreshedFiles = [
+      {
+        status: "modified" as const,
+        oldPath: "src/keep.ts",
+        newPath: "src/keep.ts",
+        isBinary: false,
+      },
+    ];
+    const request = vi.fn(async (command: string) => {
+      if (command === "getGraphData") return graphResult(refreshedCommits);
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getCommitRangeFiles") return refreshedFiles;
+      return null;
+    });
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: createFakeBridge(request).bridge,
+    });
+    instance.store.setState({
+      commits: [commit("a"), commit("b"), commit("c")],
+      visibleCommits: [commit("a"), commit("b"), commit("c")],
+      selectedCommitHash: "c",
+      selectedCommitHashes: ["b", "c"],
+      lastSelectedCommitHash: "b",
+      commitFiles: refreshedFiles,
+      selectedFilePath: "src/keep.ts",
+      rangeOldest: "c",
+      rangeNewest: "b",
+    });
+
+    await instance.store.getState().refresh({ preserveSelection: true });
+
+    expect(instance.store.getState()).toMatchObject({
+      selectedCommitHash: "b",
+      selectedCommitHashes: ["b"],
+      lastSelectedCommitHash: "b",
+      selectedFilePath: "src/keep.ts",
+      rangeOldest: "b",
+      rangeNewest: "b",
+    });
+    expect(instance.store.getState().commitFiles).toEqual(refreshedFiles);
+
+    refreshedCommits = [commit("a")];
+    await instance.store.getState().refresh({ preserveSelection: true });
+    expect(instance.store.getState()).toMatchObject({
+      selectedCommitHash: null,
+      selectedCommitHashes: [],
+      lastSelectedCommitHash: null,
+      commitFiles: [],
+      selectedFilePath: null,
+      rangeOldest: null,
+      rangeNewest: null,
+    });
+    instance.dispose();
+  });
+
   it("rejects a stale graph response after a newer filter intent", async () => {
     const older = deferred<ReturnType<typeof graphResult>>();
     const newer = deferred<ReturnType<typeof graphResult>>();
