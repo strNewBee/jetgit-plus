@@ -72,6 +72,20 @@ export interface PanelStore {
   hasMore: boolean;
   operationInProgress: boolean;
 
+  /** Repository and command facade owned by this reusable log surface. */
+  actionRepoId: () => string | null;
+  actionRefreshScope: "surface" | "comparison";
+  requestFromSurface: (
+    command: CommandType,
+    params?: Record<string, unknown>,
+    requestOptions?: BridgeRequestOptions,
+  ) => Promise<unknown>;
+  requestWithProgressFromSurface: (
+    command: CommandType,
+    params?: Record<string, unknown>,
+    requestOptions?: BridgeRequestOptions,
+  ) => Promise<unknown>;
+
   fetchInitialData: (options?: FetchInitialDataOptions) => Promise<void>;
   loadMore: () => Promise<void>;
   selectCommit: (
@@ -307,6 +321,11 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     }
   }
 
+  const boundRepoId = () =>
+    options.followGlobalActiveRepo
+      ? useRepoStore.getState().activeRepoId
+      : options.repoId;
+
   function request(
     command: CommandType,
     params?: Record<string, unknown>,
@@ -325,6 +344,19 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
       return options.bridge.request(command, params);
     }
     return options.bridge.request(command);
+  }
+
+  function requestFromSurface(
+    command: CommandType,
+    params?: Record<string, unknown>,
+    requestOptions?: BridgeRequestOptions,
+  ): Promise<unknown> {
+    const repoId = boundRepoId();
+    const boundOptions =
+      requestOptions?.scope !== "global" && repoId !== null
+        ? { ...requestOptions, repoId }
+        : requestOptions;
+    return options.bridge.request(command, params, boundOptions);
   }
 
   const revision =
@@ -379,6 +411,30 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     loading: false,
     hasMore: true,
     operationInProgress: false,
+
+    actionRepoId: boundRepoId,
+    actionRefreshScope:
+      options.history.kind === "comparison" ? "comparison" : "surface",
+    requestFromSurface,
+    async requestWithProgressFromSurface(command, params, requestOptions) {
+      const repoId = boundRepoId();
+      if (repoId !== null) incrementInFlight(repoId);
+      const start = Date.now();
+      try {
+        const result = await requestFromSurface(
+          command,
+          params,
+          requestOptions,
+        );
+        const elapsed = Date.now() - start;
+        if (elapsed < 1000) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 - elapsed));
+        }
+        return result;
+      } finally {
+        if (repoId !== null) decrementInFlight(repoId);
+      }
+    },
 
     async fetchInitialData(fetchOptions = {}) {
       const generation = ++logLoadGeneration;
@@ -762,7 +818,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         const isMulti = selectedCommitHashes.length > 1;
 
         if (isMulti) {
-          await request("openDiffEditor", {
+          await requestFromSurface("openDiffEditor", {
             commit: selectedCommitHashes[0],
             filePath,
             file,
@@ -770,7 +826,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             fileList: commitFiles,
           });
         } else {
-          await request("openDiffEditor", {
+          await requestFromSurface("openDiffEditor", {
             commit: commitHash,
             filePath,
             file,
@@ -1133,10 +1189,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
   // stores compare events against their configured repo while the ordinary
   // panel follows the repo store's active id.
   const inFlightOpCounts = new Map<string, number>();
-  const visibleRepoId = () =>
-    options.followGlobalActiveRepo
-      ? useRepoStore.getState().activeRepoId
-      : options.repoId;
+  const visibleRepoId = boundRepoId;
 
   function recomputeOperationInProgress(): void {
     const repoId = visibleRepoId();

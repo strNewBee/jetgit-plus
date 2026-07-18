@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bridge, LogQueryRevision } from "../bridge/types";
 import type { Commit, GitRefIdentity } from "../types/git";
 
@@ -29,6 +29,10 @@ const {
 const usePanelStore = defaultGitLogStore.store;
 const { useRepoStore } = await import("./repo-store");
 const { bridge } = await import("../bridge");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function emit(event: string, data: unknown): void {
   if (!panelEventHandler) {
@@ -92,6 +96,95 @@ function comparisonHistory(revision: LogQueryRevision) {
 }
 
 describe("git log store instances", () => {
+  it("exposes an instance-bound action facade for fixed and ordinary surfaces", async () => {
+    const fixedRequest = vi.fn().mockResolvedValue(undefined);
+    const fixed = createGitLogStore({
+      repoId: "repo-fixed",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "main", fullRef: "refs/heads/main" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: createFakeBridge(fixedRequest).bridge,
+    });
+
+    expect(fixed.store.getState().actionRepoId()).toBe("repo-fixed");
+    expect(fixed.store.getState().actionRefreshScope).toBe("comparison");
+    await fixed.store.getState().requestFromSurface("openFile", {
+      filePath: "src/a.ts",
+    });
+    expect(fixedRequest).toHaveBeenCalledWith(
+      "openFile",
+      { filePath: "src/a.ts" },
+      { repoId: "repo-fixed" },
+    );
+
+    const ordinaryRequest = vi.fn().mockResolvedValue(undefined);
+    const ordinary = createGitLogStore({
+      repoId: null,
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: true,
+      showCurrentReachability: true,
+      bridge: createFakeBridge(ordinaryRequest).bridge,
+    });
+    useRepoStore.setState({ activeRepoId: "repo-active" });
+    expect(ordinary.store.getState().actionRepoId()).toBe("repo-active");
+    expect(ordinary.store.getState().actionRefreshScope).toBe("surface");
+    await ordinary.store.getState().requestFromSurface("openFile", {
+      filePath: "src/b.ts",
+    });
+    expect(ordinaryRequest).toHaveBeenCalledWith(
+      "openFile",
+      { filePath: "src/b.ts" },
+      { repoId: "repo-active" },
+    );
+
+    ordinaryRequest.mockClear();
+    await ordinary.store.getState().openDiffEditor("commit-a", {
+      status: "M",
+      oldPath: "src/a.ts",
+      newPath: "src/a.ts",
+    });
+    expect(ordinaryRequest).toHaveBeenCalledWith(
+      "openDiffEditor",
+      expect.objectContaining({ commit: "commit-a", filePath: "src/a.ts" }),
+      { repoId: "repo-active" },
+    );
+
+    fixed.dispose();
+    ordinary.dispose();
+  });
+
+  it("attributes action progress to the owning fixed surface", async () => {
+    vi.useFakeTimers();
+    const request = vi.fn().mockResolvedValue(undefined);
+    const instance = createGitLogStore({
+      repoId: "repo-fixed",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: createFakeBridge(request).bridge,
+    });
+
+    const operation = instance.store
+      .getState()
+      .requestWithProgressFromSurface("cherryPick", { hash: "abc" });
+    expect(instance.store.getState().operationInProgress).toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "cherryPick",
+      { hash: "abc" },
+      { repoId: "repo-fixed" },
+    );
+
+    await vi.runAllTimersAsync();
+    await operation;
+    expect(instance.store.getState().operationInProgress).toBe(false);
+
+    instance.dispose();
+    vi.useRealTimers();
+  });
+
   it("keeps mutations and async graph results isolated", async () => {
     const topRange: LogQueryRevision = {
       kind: "ref",

@@ -1,7 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { bridge } from "../../shared/bridge";
 import { useModifierClickSelection } from "../../shared/hooks/useModifierClickSelection";
 import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit } from "../../shared/types/git";
@@ -38,6 +37,7 @@ export function CommitList({
   const selectCommit = useGitLogStore((s) => s.selectCommit);
   const scrollTargetHash = useGitLogStore((s) => s.scrollTargetHash);
   const clearScrollTarget = useGitLogStore((s) => s.clearScrollTarget);
+  const request = useGitLogStore((s) => s.requestFromSurface);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(
@@ -481,7 +481,7 @@ export function CommitList({
               onConfirm={async ({ branchName, checkout, force }) => {
                 const hash = createBranchDialog.hash;
                 try {
-                  await bridge.request("createBranchFromCommit", {
+                  await request("createBranchFromCommit", {
                     branchName,
                     hash,
                     checkout,

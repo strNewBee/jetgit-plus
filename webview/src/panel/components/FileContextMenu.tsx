@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { bridge, bridgeWithProgress } from "../../shared/bridge";
 import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { DiffFile } from "../../shared/types/git";
 
@@ -136,6 +135,10 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const selectedCommitHash = useGitLogStore((s) => s.selectedCommitHash);
   const openDiffEditor = useGitLogStore((s) => s.openDiffEditor);
   const setFilter = useGitLogStore((s) => s.setFilter);
+  const request = useGitLogStore((s) => s.requestFromSurface);
+  const requestWithProgress = useGitLogStore(
+    (s) => s.requestWithProgressFromSurface,
+  );
   const [position, setPosition] = useState<{
     top: number;
     left: number;
@@ -220,7 +223,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const handleEditSource = async () => {
     onClose();
     try {
-      await bridge.request("openFile", { filePath });
+      await request("openFile", { filePath });
     } catch (err) {
       console.error("Open file failed:", err);
     }
@@ -230,7 +233,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
     onClose();
     if (selectedCommitHash) {
       try {
-        await bridge.request("openFileAtRevision", {
+        await request("openFileAtRevision", {
           filePath,
           ref: selectedCommitHash,
         });
@@ -243,7 +246,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const handleCopyPath = async () => {
     onClose();
     try {
-      await bridge.request("copyToClipboard", { text: filePath });
+      await request("copyToClipboard", { text: filePath }, { scope: "global" });
     } catch (err) {
       console.error("Copy path failed:", err);
     }
@@ -253,7 +256,7 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
     onClose();
     const fileName = filePath.split("/").pop() ?? filePath;
     try {
-      await bridge.request("copyToClipboard", { text: fileName });
+      await request("copyToClipboard", { text: fileName }, { scope: "global" });
     } catch (err) {
       console.error("Copy filename failed:", err);
     }
@@ -262,13 +265,17 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const handleRevertFileChanges = async () => {
     onClose();
     if (!selectedCommitHash) return;
-    const result = (await bridge.request("showConfirmMessage", {
-      message: `Revert changes to '${filePath.split("/").pop()}' from this commit?`,
-      confirmLabel: "Revert",
-    })) as { confirmed: boolean };
+    const result = (await request(
+      "showConfirmMessage",
+      {
+        message: `Revert changes to '${filePath.split("/").pop()}' from this commit?`,
+        confirmLabel: "Revert",
+      },
+      { scope: "global" },
+    )) as { confirmed: boolean };
     if (!result.confirmed) return;
     try {
-      await bridgeWithProgress("revertFileChanges", {
+      await requestWithProgress("revertFileChanges", {
         hash: selectedCommitHash,
         filePath,
         status: file.status,
@@ -281,13 +288,17 @@ export function FileContextMenu({ x, y, file, onClose }: FileContextMenuProps) {
   const handleCherryPickFileChanges = async () => {
     onClose();
     if (!selectedCommitHash) return;
-    const result = (await bridge.request("showConfirmMessage", {
-      message: `Apply changes to '${filePath.split("/").pop()}' from this commit to working tree?`,
-      confirmLabel: "Apply",
-    })) as { confirmed: boolean };
+    const result = (await request(
+      "showConfirmMessage",
+      {
+        message: `Apply changes to '${filePath.split("/").pop()}' from this commit to working tree?`,
+        confirmLabel: "Apply",
+      },
+      { scope: "global" },
+    )) as { confirmed: boolean };
     if (!result.confirmed) return;
     try {
-      await bridgeWithProgress("cherryPickFileChanges", {
+      await requestWithProgress("cherryPickFileChanges", {
         hash: selectedCommitHash,
         filePath,
       });
