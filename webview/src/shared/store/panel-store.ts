@@ -33,7 +33,7 @@ export interface FetchInitialDataOptions {
 
 export interface PanelStore {
   commits: Commit[];
-  /** Commits filtered by search/author (client-side). Graph layout uses full `commits`. */
+  /** Commits visible after local collapse state. Host queries apply log filters. */
   visibleCommits: Commit[];
   branches: BranchInfo[];
   tags: TagInfo[];
@@ -148,7 +148,6 @@ interface SelectionSnapshot {
 
 function filterCommits(
   commits: Commit[],
-  filter: PanelFilter,
   collapsedIntermediates: Map<string, string[]>,
 ): Commit[] {
   const hiddenSet = new Set<string>();
@@ -156,46 +155,45 @@ function filterCommits(
     for (const h of hashes) hiddenSet.add(h);
   }
 
-  // Compute date cutoff for dateRange filter
-  let dateCutoff: Date | null = null;
-  if (filter.dateRange) {
-    const now = new Date();
-    if (filter.dateRange === "today") {
-      dateCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    } else if (filter.dateRange === "7days") {
-      dateCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    } else if (filter.dateRange === "30days") {
-      dateCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    } else if (filter.dateRange === "90days") {
-      dateCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    }
+  return commits.filter((commit) => !hiddenSet.has(commit.hash));
+}
+
+function dateRangeParams(dateRange: PanelFilter["dateRange"]): {
+  since?: string;
+  until?: string;
+} {
+  if (!dateRange) return {};
+
+  const now = new Date();
+  let since: Date;
+  if (dateRange === "today") {
+    since = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else {
+    const days = dateRange === "7days" ? 7 : dateRange === "30days" ? 30 : 90;
+    since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   }
+  return { since: since.toISOString(), until: now.toISOString() };
+}
 
-  return commits.filter((c) => {
-    if (hiddenSet.has(c.hash)) return false;
+function queryParams(filter: PanelFilter): Record<string, unknown> {
+  return {
+    ...(filter.branch ? { branch: filter.branch } : {}),
+    ...(filter.searchQuery ? { search: filter.searchQuery } : {}),
+    ...(filter.author ? { author: filter.author } : {}),
+    ...dateRangeParams(filter.dateRange),
+    ...(filter.file ? { file: filter.file } : {}),
+  };
+}
 
-    if (filter.searchQuery) {
-      const q = filter.searchQuery.toLowerCase();
-      if (
-        !c.subject.toLowerCase().includes(q) &&
-        !c.body.toLowerCase().includes(q)
-      ) {
-        return false;
-      }
-    }
-    if (filter.author) {
-      if (!c.authorName.toLowerCase().includes(filter.author.toLowerCase())) {
-        return false;
-      }
-    }
-    if (dateCutoff) {
-      const commitDate = new Date(c.authorDate);
-      if (commitDate < dateCutoff) {
-        return false;
-      }
-    }
-    return true;
-  });
+function currentBranchRef(
+  branches: BranchInfo[] | null,
+): GitRefIdentity | null {
+  const branch = branches?.find(
+    (candidate) => !candidate.isRemote && candidate.isCurrent,
+  );
+  return branch
+    ? { type: "local", name: branch.name, fullRef: branch.fullRef }
+    : null;
 }
 
 function deriveSelectionFromVisible(
@@ -289,6 +287,8 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
   let selectionGeneration = 0;
   let navigationGeneration = 0;
   let activeLogLoad: Promise<void> | null = null;
+  let filterRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let currentReachabilityRef: GitRefIdentity | null = null;
   // Repository initialization is an intent, not a property of one request. A
   // watcher refresh may supersede the first request before branches resolve;
   // the replacement request must still initialize the checked-out branch.
@@ -300,6 +300,11 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     selectionGeneration += 1;
     navigationGeneration += 1;
     activeLogLoad = null;
+    currentReachabilityRef = null;
+    if (filterRefreshTimer) {
+      clearTimeout(filterRefreshTimer);
+      filterRefreshTimer = null;
+    }
   }
 
   function request(
@@ -375,9 +380,9 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     hasMore: true,
     operationInProgress: false,
 
-    async fetchInitialData(options = {}) {
+    async fetchInitialData(fetchOptions = {}) {
       const generation = ++logLoadGeneration;
-      if (options.defaultToCurrentBranch && !get().filter.branch) {
+      if (fetchOptions.defaultToCurrentBranch && !get().filter.branch) {
         pendingDefaultBranchInitialization = true;
       }
       const shouldDefaultToCurrentBranch =
@@ -391,12 +396,14 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             BranchInfo[] | null
           >;
           const tagsRequest = request("getTags") as Promise<TagInfo[] | null>;
-          const requestGraph = () =>
+          const requestGraph = (currentRef: GitRefIdentity | null) =>
             request("getGraphData", {
               maxCount: 200,
               ...historyParams,
-              branch: requestedFilter.branch || undefined,
-              file: requestedFilter.file || undefined,
+              ...queryParams(requestedFilter),
+              ...(options.showCurrentReachability && currentRef
+                ? { currentRef }
+                : {}),
             }) as Promise<
               | LogQueryResult
               | {
@@ -412,19 +419,20 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
           let graphResult: Awaited<ReturnType<typeof requestGraph>>;
           let branches: BranchInfo[] | null;
           let tags: TagInfo[] | null;
-          if (shouldDefaultToCurrentBranch) {
+          if (shouldDefaultToCurrentBranch || options.showCurrentReachability) {
             [branches, tags] = await Promise.all([
               branchesRequest,
               tagsRequest,
             ]);
             if (generation !== logLoadGeneration) return;
-            const currentRef = branches?.find(
-              (branch) => !branch.isRemote && branch.isCurrent,
-            )?.fullRef;
-            if (currentRef) {
-              requestedFilter = { ...requestedFilter, branch: currentRef };
+            const currentRef = currentBranchRef(branches);
+            if (shouldDefaultToCurrentBranch && currentRef) {
+              requestedFilter = {
+                ...requestedFilter,
+                branch: currentRef.fullRef,
+              };
               set((state) => ({
-                filter: { ...state.filter, branch: currentRef },
+                filter: { ...state.filter, branch: currentRef.fullRef },
               }));
               // The initialization intent is fulfilled once the checked-out ref
               // is known and reflected in state. Do not retain it while the
@@ -432,15 +440,18 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               // request, and a leaked flag would later override an explicit
               // filter clear (for example during navigateToRef).
               pendingDefaultBranchInitialization = false;
-            } else {
+            } else if (shouldDefaultToCurrentBranch) {
               // Detached HEAD (or a repository without a local branch) has no
               // branch to initialize. Future ordinary refreshes stay unfiltered.
               pendingDefaultBranchInitialization = false;
             }
-            graphResult = await requestGraph();
+            currentReachabilityRef = options.showCurrentReachability
+              ? currentRef
+              : null;
+            graphResult = await requestGraph(currentReachabilityRef);
           } else {
             [graphResult, branches, tags] = await Promise.all([
-              requestGraph(),
+              requestGraph(null),
               branchesRequest,
               tagsRequest,
             ]);
@@ -478,13 +489,8 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               ? graphResult.hasMore
               : commits.length >= 200;
 
-          const { filter, pendingSelectionFromFilter, collapsedIntermediates } =
-            get();
-          const visible = filterCommits(
-            commits,
-            filter,
-            collapsedIntermediates,
-          );
+          const { pendingSelectionFromFilter, collapsedIntermediates } = get();
+          const visible = filterCommits(commits, collapsedIntermediates);
 
           // Check if we need to restore selection from a cleared filter.
           if (pendingSelectionFromFilter.length > 0) {
@@ -606,7 +612,10 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             count: 200,
             snapshot: laneSnapshot,
             ...historyParams,
-            branch: filter.branch || undefined,
+            ...queryParams(filter),
+            ...(options.showCurrentReachability && currentReachabilityRef
+              ? { currentRef: currentReachabilityRef }
+              : {}),
           })) as
             | LogQueryResult
             | {
@@ -636,7 +645,6 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               commits: allCommits,
               visibleCommits: filterCommits(
                 allCommits,
-                get().filter,
                 get().collapsedIntermediates,
               ),
               graphLayout: { ...get().graphLayout, ...result.graphData.lanes },
@@ -781,54 +789,46 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         // repository initialization and must survive ordinary refreshes.
         pendingDefaultBranchInitialization = false;
       }
-      const { filter: current, selectedCommitHashes, commits } = get();
+      const { filter: current } = get();
       const next = { ...current, ...partial };
+      const queryChanged =
+        current.searchQuery !== next.searchQuery ||
+        current.branch !== next.branch ||
+        current.author !== next.author ||
+        current.dateRange !== next.dateRange ||
+        current.file !== next.file;
+      if (!queryChanged) return;
 
-      // Branch or file filter changes require a backend re-fetch
-      if (
-        (partial.branch !== undefined && partial.branch !== current.branch) ||
-        (partial.file !== undefined && partial.file !== current.file)
-      ) {
-        set({
-          filter: next,
-          pendingSelectionFromFilter: [],
-          collapsedSequenceIds: new Set(),
-          collapsedIntermediates: new Map(),
-        });
-        get().fetchInitialData();
-        return;
-      }
+      // Invalidate old results; the replacement response validates selection.
+      // These counters are per store instance, so comparison panels stay isolated.
+      logLoadGeneration += 1;
+      selectionGeneration += 1;
+      if (filterRefreshTimer) clearTimeout(filterRefreshTimer);
+      filterRefreshTimer = null;
+      set({
+        filter: next,
+        commits: [],
+        visibleCommits: [],
+        graphLayout: {},
+        laneSnapshot: null,
+        unavailableRef: null,
+        commitFiles: [],
+        selectedFilePath: null,
+        pendingSelectionFromFilter: [],
+        collapsedSequenceIds: new Set(),
+        collapsedIntermediates: new Map(),
+        hasMore: true,
+        loading: false,
+      });
 
-      // Search/author filter: client-side only
-      const wasFiltered = !!(
-        current.searchQuery ||
-        current.author ||
-        current.dateRange
-      );
-      const isNowFiltered = !!(
-        next.searchQuery ||
-        next.author ||
-        next.dateRange
-      );
-      const visible = filterCommits(
-        commits,
-        next,
-        get().collapsedIntermediates,
-      );
-
-      if (wasFiltered && !isNowFiltered) {
-        // Clearing filter → save current selection for restoration
-        set({
-          filter: next,
-          visibleCommits: visible,
-          pendingSelectionFromFilter: selectedCommitHashes,
-        });
+      const refresh = () => {
+        filterRefreshTimer = null;
+        void get().fetchInitialData();
+      };
+      if (partial.searchQuery !== undefined) {
+        filterRefreshTimer = setTimeout(refresh, 200);
       } else {
-        set({
-          filter: next,
-          visibleCommits: visible,
-          pendingSelectionFromFilter: [],
-        });
+        refresh();
       }
     },
 
@@ -1011,7 +1011,6 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
       const fileGeneration = ++selectionGeneration;
       const {
         commits,
-        filter,
         collapsedSequenceIds,
         collapsedIntermediates,
         selectedCommitHashes,
@@ -1029,7 +1028,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         nextMap.set(sequenceId, intermediates);
       }
 
-      const nextVisible = filterCommits(commits, filter, nextMap);
+      const nextVisible = filterCommits(commits, nextMap);
       const nextSelection = deriveSelectionFromVisible(
         nextVisible,
         selectedCommitHashes,
@@ -1221,7 +1220,7 @@ export const defaultGitLogStore = createGitLogStore({
   repoId: null,
   history: { kind: "ordinary" },
   followGlobalActiveRepo: true,
-  showCurrentReachability: false,
+  showCurrentReachability: true,
   bridge,
 });
 

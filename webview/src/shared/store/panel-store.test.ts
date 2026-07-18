@@ -283,6 +283,159 @@ describe("git log store instances", () => {
   });
 });
 
+describe("panel-store host-backed filters", () => {
+  it("sends search, author, date, and file filters to the host query", async () => {
+    vi.useFakeTimers();
+    const request = vi.fn(async (command: string) => {
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getGraphData") return graphResult([]);
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    const { bridge: fakeBridge } = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    try {
+      instance.store.getState().setFilter({
+        searchQuery: "fix race",
+        author: "Ada",
+        dateRange: "7days",
+        file: "src/app.ts",
+      });
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(request).toHaveBeenCalledWith(
+        "getGraphData",
+        expect.objectContaining({
+          search: "fix race",
+          author: "Ada",
+          since: expect.any(String),
+          until: expect.any(String),
+          file: "src/app.ts",
+        }),
+        expect.objectContaining({ repoId: "repo-a" }),
+      );
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards a delayed earlier search response", async () => {
+    vi.useFakeTimers();
+    const older = deferred<ReturnType<typeof graphResult>>();
+    const newer = deferred<ReturnType<typeof graphResult>>();
+    const request = vi.fn(async (command: string, params?: unknown) => {
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getGraphData") {
+        return (params as { search?: string }).search === "older"
+          ? older.promise
+          : newer.promise;
+      }
+      if (command === "getCommitRangeFiles") return [];
+      return null;
+    });
+    const { bridge: fakeBridge } = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+
+    try {
+      instance.store.getState().setFilter({ searchQuery: "older" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(request).toHaveBeenCalledWith(
+        "getGraphData",
+        expect.objectContaining({ search: "older" }),
+        expect.objectContaining({ repoId: "repo-a" }),
+      );
+
+      instance.store.getState().setFilter({ searchQuery: "newer" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(request).toHaveBeenCalledWith(
+        "getGraphData",
+        expect.objectContaining({ search: "newer" }),
+        expect.objectContaining({ repoId: "repo-a" }),
+      );
+
+      newer.resolve(graphResult([commit("newer")]));
+      await vi.advanceTimersByTimeAsync(0);
+      older.resolve(graphResult([commit("older")]));
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(
+        instance.store.getState().commits.map((item) => item.hash),
+      ).toEqual(["newer"]);
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends the checked-out full ref on reachability queries and pagination", async () => {
+    const currentRef = {
+      type: "local" as const,
+      name: "main",
+      fullRef: "refs/heads/main",
+    };
+    const graphRequests: Array<Record<string, unknown>> = [];
+    const request = vi.fn(async (command: string, params?: unknown) => {
+      if (command === "getBranches") {
+        return [
+          {
+            ...currentRef,
+            isRemote: false,
+            isCurrent: true,
+            isFavorite: false,
+            ahead: 0,
+            behind: 0,
+            lastCommitHash: "tip",
+          },
+        ];
+      }
+      if (command === "getTags" || command === "getCommitRangeFiles") return [];
+      if (command === "getGraphData" || command === "loadMoreLog") {
+        graphRequests.push(params as Record<string, unknown>);
+        return {
+          status: "ok" as const,
+          ...graphResult([
+            commit(command === "getGraphData" ? "tip" : "older"),
+          ]),
+          hasMore: command === "getGraphData",
+        };
+      }
+      return null;
+    });
+    const { bridge: fakeBridge } = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: true,
+      bridge: fakeBridge,
+    });
+
+    await instance.store.getState().fetchInitialData();
+    await instance.store.getState().loadMore();
+
+    expect(graphRequests).toHaveLength(2);
+    expect(graphRequests).toEqual(
+      expect.arrayContaining([expect.objectContaining({ currentRef })]),
+    );
+    expect(graphRequests[1]).toEqual(expect.objectContaining({ currentRef }));
+    instance.dispose();
+  });
+});
+
 describe("panel-store operationInProgress per-repo filter", () => {
   beforeEach(() => {
     _resetOperationProgressForTests();

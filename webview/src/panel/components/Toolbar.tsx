@@ -13,7 +13,6 @@ export function Toolbar() {
   const toggleColumnVisibility = useGitLogStore(
     (s) => s.toggleColumnVisibility,
   );
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const historyBranch = filter.branch || currentBranch;
 
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -41,11 +40,7 @@ export function Toolbar() {
 
   const handleSearch = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = e.target.value;
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        setFilter({ searchQuery: value });
-      }, 300);
+      setFilter({ searchQuery: e.target.value });
     },
     [setFilter],
   );
