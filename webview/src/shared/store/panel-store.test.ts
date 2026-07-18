@@ -284,6 +284,48 @@ describe("git log store instances", () => {
 });
 
 describe("panel-store host-backed filters", () => {
+  it("clears stale selection, range, and file detail state before a host filter refresh", () => {
+    const graphRequest = deferred<ReturnType<typeof graphResult>>();
+    const request = vi.fn(async (command: string) => {
+      if (command === "getBranches" || command === "getTags") return [];
+      if (command === "getGraphData") return graphRequest.promise;
+      return null;
+    });
+    const { bridge: fakeBridge } = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fakeBridge,
+    });
+    const staleCommit = commit("stale");
+    instance.store.setState({
+      commits: [staleCommit],
+      visibleCommits: [staleCommit],
+      selectedCommitHash: staleCommit.hash,
+      selectedCommitHashes: [staleCommit.hash],
+      lastSelectedCommitHash: staleCommit.hash,
+      rangeOldest: staleCommit.hash,
+      rangeNewest: staleCommit.hash,
+      commitFiles: [{ newPath: "stale.ts" } as never],
+      selectedFilePath: "stale.ts",
+    });
+
+    instance.store.getState().setFilter({ author: "Ada" });
+
+    expect(instance.store.getState()).toMatchObject({
+      selectedCommitHash: null,
+      selectedCommitHashes: [],
+      lastSelectedCommitHash: null,
+      rangeOldest: null,
+      rangeNewest: null,
+      commitFiles: [],
+      selectedFilePath: null,
+    });
+    instance.dispose();
+  });
+
   it("sends search, author, date, and file filters to the host query", async () => {
     vi.useFakeTimers();
     const request = vi.fn(async (command: string) => {
@@ -1177,7 +1219,7 @@ describe("panel-store ref selection", () => {
     await navigation;
 
     expect(usePanelStore.getState().filter.searchQuery).toBe("keep");
-    expect(usePanelStore.getState().selectedCommitHash).toBe(current.hash);
+    expect(usePanelStore.getState().selectedCommitHash).toBeNull();
     expect(usePanelStore.getState().scrollTargetHash).toBeNull();
     expect(request).not.toHaveBeenCalledWith(
       "showErrorNotification",

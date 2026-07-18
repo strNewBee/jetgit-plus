@@ -799,7 +799,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         current.file !== next.file;
       if (!queryChanged) return;
 
-      // Invalidate old results; the replacement response validates selection.
+      // Invalidate old results and selection before a replacement host query.
       // These counters are per store instance, so comparison panels stay isolated.
       logLoadGeneration += 1;
       selectionGeneration += 1;
@@ -812,8 +812,13 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         graphLayout: {},
         laneSnapshot: null,
         unavailableRef: null,
+        selectedCommitHash: null,
+        selectedCommitHashes: [],
+        lastSelectedCommitHash: null,
         commitFiles: [],
         selectedFilePath: null,
+        rangeOldest: null,
+        rangeNewest: null,
         pendingSelectionFromFilter: [],
         collapsedSequenceIds: new Set(),
         collapsedIntermediates: new Map(),
