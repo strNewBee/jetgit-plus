@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { GitRefIdentity } from "../git/branchDashboardState";
+import { JetGitError, JetGitErrorCode } from "../git/errors";
 import type { GitService } from "../git/gitService";
 import type { MessageRouter } from "../messages/messageRouter";
 import { getWebviewHtml } from "./html";
@@ -26,7 +27,7 @@ export async function resolveCurrentCompareRef(
   return {
     type: "detached",
     name: headHash.slice(0, 7),
-    fullRef: "HEAD",
+    fullRef: headHash,
   };
 }
 
@@ -43,11 +44,21 @@ export function registerComparePanelHandlers(
   comparePanelManager: ComparePanelOpener,
 ): void {
   messageRouter.handle("openCompareWithCurrent", async (params, ctx) => {
-    if (!ctx) return { status: "not_git_repo" as const, data: null };
+    if (!ctx) {
+      throw new JetGitError(
+        JetGitErrorCode.REPO_NOT_FOUND,
+        "No repository context for comparison",
+      );
+    }
     const { repoId, gitService } = ctx;
     const selectedRef = params.ref as GitRefIdentity;
     const currentRef = await resolveCurrentCompareRef(gitService);
-    if (!currentRef) return { error: "No current ref" };
+    if (!currentRef) {
+      throw new JetGitError(
+        JetGitErrorCode.INVALID_REF,
+        "No current Git ref is available for comparison",
+      );
+    }
     comparePanelManager.open(repoId, selectedRef, currentRef);
     return { success: true };
   });

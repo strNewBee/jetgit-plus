@@ -87,6 +87,12 @@ export class GitService {
     if (ref === "HEAD") {
       return;
     }
+    // A detached comparison is pinned to the full object id resolved when the
+    // panel opens. Full SHA-1/SHA-256 ids are safe argv values and cannot be
+    // interpreted as options or revision expressions.
+    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ref)) {
+      return;
+    }
     if (!ref.startsWith("refs/")) {
       throw new Error(`Invalid Git ref: ${ref}`);
     }

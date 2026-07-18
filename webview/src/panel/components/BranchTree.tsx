@@ -342,6 +342,7 @@ export function BranchTree({
   const selectRef = useGitLogStore((s) => s.selectRef);
   const setFavorite = useGitLogStore((s) => s.setFavorite);
   const navigateToRef = useGitLogStore((s) => s.navigateToRef);
+  const requestFromSurface = useGitLogStore((s) => s.requestFromSurface);
   const showTags = useGitLogStore((s) => s.showTags);
   const singleClickAction = useGitLogStore((s) => s.singleClickAction);
   const branchGroupByDirectory = useGitLogStore(
@@ -521,6 +522,13 @@ export function BranchTree({
       }
     },
     [setFavorite],
+  );
+
+  const handleCompareWithCurrent = useCallback(
+    (ref: GitRefIdentity) => {
+      void requestFromSurface("openCompareWithCurrent", { ref });
+    },
+    [requestFromSurface],
   );
 
   return (
@@ -772,6 +780,10 @@ export function BranchTree({
                 closeContextMenu();
                 setPushDialog({ branchName });
               }}
+              onCompare={(ref) => {
+                closeContextMenu();
+                handleCompareWithCurrent(ref);
+              }}
             />,
             document.body,
           )}
@@ -787,6 +799,11 @@ export function BranchTree({
                 const tag = tagContextMenu.tag;
                 setTagContextMenu(null);
                 void handleFavorite(tagIdentity(tag), !tag.isFavorite);
+              }}
+              onCompare={() => {
+                const tag = tagContextMenu.tag;
+                setTagContextMenu(null);
+                handleCompareWithCurrent(tagIdentity(tag));
               }}
             />,
             document.body,
@@ -1073,6 +1090,7 @@ function RefFavoriteContextMenu({
   name,
   isFavorite,
   onToggle,
+  onCompare,
   onClose,
 }: {
   x: number;
@@ -1080,6 +1098,7 @@ function RefFavoriteContextMenu({
   name: string;
   isFavorite: boolean;
   onToggle: () => void;
+  onCompare: () => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1111,6 +1130,13 @@ function RefFavoriteContextMenu({
         onClick={onToggle}
       >
         {isFavorite ? "Unmark as Favorite" : "Mark as Favorite"}
+      </button>
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={onCompare}
+      >
+        Compare with Current
       </button>
     </div>
   );
@@ -1283,6 +1309,7 @@ function BranchContextMenu({
   onClose,
   onCreateBranch,
   onPush,
+  onCompare,
 }: {
   x: number;
   y: number;
@@ -1291,6 +1318,7 @@ function BranchContextMenu({
   onClose: () => void;
   onCreateBranch: (startPoint: string, defaultName: string) => void;
   onPush: (branchName: string) => void;
+  onCompare: (ref: GitRefIdentity) => void;
 }) {
   const setFavorite = useGitLogStore((state) => state.setFavorite);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1464,6 +1492,10 @@ function BranchContextMenu({
     onPush(branch.name);
   };
 
+  const handleCompare = () => {
+    onCompare(branchIdentity(branch));
+  };
+
   const handleUpdate = async () => {
     if (!branch.upstream) return;
     onClose();
@@ -1537,6 +1569,7 @@ function BranchContextMenu({
     label: string;
     action: () => void;
     disabled?: boolean;
+    disabledReason?: string;
     separator?: boolean;
   }[] = [];
 
@@ -1552,6 +1585,13 @@ function BranchContextMenu({
   items.push({
     label: `New Branch from '${branch.name}'...`,
     action: handleNewBranch,
+  });
+  items.push({
+    label: "Compare with Current",
+    action: handleCompare,
+    disabled: !branch.isRemote && branch.isCurrent,
+    disabledReason:
+      !branch.isRemote && branch.isCurrent ? "Already checked out" : undefined,
   });
   if (!isCurrent) {
     items.push({
@@ -1586,6 +1626,7 @@ function BranchContextMenu({
       label: "Update",
       action: handleUpdate,
       disabled: !branch.upstream,
+      disabledReason: !branch.upstream ? "No upstream configured" : undefined,
     });
     items.push({ label: "Push...", action: handlePush });
   }
@@ -1630,10 +1671,8 @@ function BranchContextMenu({
             tabIndex={0}
             aria-label={item.label}
             aria-disabled={item.disabled || undefined}
-            aria-description={
-              item.disabled ? "No upstream configured" : undefined
-            }
-            title={item.disabled ? "No upstream configured" : undefined}
+            aria-description={item.disabledReason}
+            title={item.disabledReason}
             onClick={item.disabled ? undefined : item.action}
             onKeyDown={(event) => {
               if (

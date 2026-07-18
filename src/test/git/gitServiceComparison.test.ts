@@ -151,6 +151,28 @@ async function createComparisonRepository(
 }
 
 describe("GitService structured comparison revisions", () => {
+  it("accepts resolved commit object ids as pinned detached range endpoints", async () => {
+    const { base, repo, commonCommitHash, mainCommitHash } =
+      await createComparisonRepository();
+    try {
+      const service = serviceFor(repo);
+      const result = await service.getLog({
+        revision: {
+          kind: "range",
+          excludeRef: commonCommitHash,
+          includeRef: mainCommitHash,
+        },
+      });
+
+      assert.deepStrictEqual(
+        result.map((commit) => commit.subject),
+        ["main only"],
+      );
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
   it("marks every returned commit by reachability from the current ref", async () => {
     const { base, repo } = await createComparisonRepository();
     try {

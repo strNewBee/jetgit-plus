@@ -150,14 +150,6 @@ export function BranchSidebar({
           <IconDelete />
         </button>
       </Tooltip>
-      {/* TODO(future): re-add "Compare with Current" — temporarily removed in
-          the Fix-6 multi-repo hardening commit because it built invalid
-          jetgit-plus:/ diff URIs (branch name used as the URI path, no `?ref=`,
-          no `?repo=`, so GitContentProvider could never resolve real file
-          content — and after a repo switch the bare URIs resolved against the
-          wrong repo). When re-adding, construct the two diff URIs with
-          buildGitContentUri(ref, filePath, repoId) (or carry ?ref=&repo=)
-          exactly like the other diff handlers (e.g. showIdeaShelfFileDiff). */}
       <Tooltip text="Fetch">
         <button
           type="button"

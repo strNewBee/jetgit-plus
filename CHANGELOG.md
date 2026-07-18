@@ -1,5 +1,18 @@
 # Changelog / 更新日志
 
+## [0.5.2] - 2026-07-18
+
+### Added / 新增
+- **Compare with Current** — local branches, remote branches, and tags can open repository-bound comparison editor tabs; each ordered ref pair keeps its own session-only tab / 恢复「与当前分支比较」：本地分支、远程分支和 Tag 均可打开绑定仓库的比较编辑器标签页，每个有序 ref 组合在当前会话中保持独立标签页
+- **Bidirectional comparison logs** — the upper log shows commits unique to the selected ref and the lower log shows commits unique to the current ref; both sides have independent Search, User, Date, Path, pagination, selection, changed files, and commit details / 双向比较日志：上方展示所选 ref 独有提交，下方展示当前 ref 独有提交；两侧分别拥有独立过滤、分页、选择、文件变更和提交详情
+
+### Changed / 变更
+- **Current-branch reachability background** — the ordinary Git Log uses a theme-aware blue background for commits reachable from the checked-out branch, with selected and hover states taking precedence / 普通 Git Log 使用主题感知的蓝色背景标记当前 checkout 分支可达的提交，选中与悬浮样式优先
+- **Shared commit actions** — ordinary and comparison logs use the same repository-bound commit action registry, so future actions can be added once for both surfaces / 普通日志与比较日志共用同一套仓库绑定的 commit action registry，后续动作只需实现一次即可同时生效
+
+### Fixed / 修复
+- **Repository-safe comparison refresh** — comparison tabs ignore other repositories, coalesce short watcher bursts, preserve valid selections across refreshes, and keep detached comparisons pinned to the commit captured at creation / 比较标签页忽略其它仓库事件、合并短时间 watcher 刷新、保留仍有效的选择，并将 detached 比较固定到创建时的 commit
+
 ## [0.5.1] - 2026-07-17
 
 ### Added / 新增

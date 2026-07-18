@@ -21,7 +21,8 @@ const { GitLogStoreProvider } = await import(
   "../../shared/store/git-log-store-context"
 );
 const { defaultGitLogStore } = await import("../../shared/store/panel-store");
-const { bridgeWithProgress } = await import("../../shared/bridge");
+const { bridge, bridgeWithProgress } = await import("../../shared/bridge");
+const { useRepoStore } = await import("../../shared/store/repo-store");
 const { BranchTree } = await import("./BranchTree");
 const panelStore = defaultGitLogStore.store;
 
@@ -116,6 +117,7 @@ afterEach(() => {
     commits: [],
     selectedRefs: [],
   });
+  useRepoStore.setState({ activeRepoId: null });
 });
 
 describe("BranchTree unified refs", () => {
@@ -273,6 +275,129 @@ describe("BranchTree unified refs", () => {
 
     expect(bridgeWithProgress).not.toHaveBeenCalledWith(
       "updateBranch",
+      expect.anything(),
+    );
+  });
+
+  it("compares the right-clicked local branch instead of prior multi-selection", async () => {
+    seedTree(true);
+    useRepoStore.setState({ activeRepoId: "repo-tree" });
+    panelStore.setState({
+      selectedRefs: [
+        { type: "local", name: "main", fullRef: "refs/heads/main" },
+        {
+          type: "local",
+          name: "favorite",
+          fullRef: "refs/heads/favorite",
+        },
+      ],
+    });
+    const { getByText, getByLabelText } = renderWithStore(<BranchTree />);
+
+    fireEvent.contextMenu(getByText("feature/plain"), {
+      clientX: 20,
+      clientY: 30,
+    });
+    fireEvent.click(getByLabelText("Compare with Current"));
+
+    await waitFor(() =>
+      expect(bridge.request).toHaveBeenCalledWith(
+        "openCompareWithCurrent",
+        {
+          ref: {
+            type: "local",
+            name: "feature/plain",
+            fullRef: "refs/heads/feature/plain",
+          },
+        },
+        { repoId: "repo-tree" },
+      ),
+    );
+  });
+
+  it("compares the right-clicked remote branch through the bound surface", async () => {
+    seedTree(true);
+    useRepoStore.setState({ activeRepoId: "repo-tree" });
+    panelStore.setState((state) => ({
+      branches: [
+        ...state.branches,
+        {
+          name: "origin/feature",
+          fullRef: "refs/remotes/origin/feature",
+          isRemote: true,
+          isCurrent: false,
+          isFavorite: false,
+          ahead: 0,
+          behind: 0,
+          lastCommitHash: "remote-tip",
+        },
+      ],
+    }));
+    const { getByText, getByLabelText } = renderWithStore(<BranchTree />);
+
+    fireEvent.contextMenu(getByText("origin/feature"), {
+      clientX: 20,
+      clientY: 30,
+    });
+    fireEvent.click(getByLabelText("Compare with Current"));
+
+    await waitFor(() =>
+      expect(bridge.request).toHaveBeenCalledWith(
+        "openCompareWithCurrent",
+        {
+          ref: {
+            type: "remote",
+            name: "origin/feature",
+            fullRef: "refs/remotes/origin/feature",
+          },
+        },
+        { repoId: "repo-tree" },
+      ),
+    );
+  });
+
+  it("compares the right-clicked tag through the bound surface", async () => {
+    seedTree(true);
+    useRepoStore.setState({ activeRepoId: "repo-tree" });
+    const { getByText, getByRole } = renderWithStore(<BranchTree />);
+
+    fireEvent.contextMenu(getByText("v2.0.0"), {
+      clientX: 20,
+      clientY: 30,
+    });
+    fireEvent.click(getByRole("button", { name: "Compare with Current" }));
+
+    await waitFor(() =>
+      expect(bridge.request).toHaveBeenCalledWith(
+        "openCompareWithCurrent",
+        {
+          ref: {
+            type: "tag",
+            name: "v2.0.0",
+            fullRef: "refs/tags/v2.0.0",
+          },
+        },
+        { repoId: "repo-tree" },
+      ),
+    );
+  });
+
+  it("disables Compare with Current for the checked-out local branch", () => {
+    seedTree(true);
+    useRepoStore.setState({ activeRepoId: "repo-tree" });
+    const { getByText, getByLabelText } = renderWithStore(<BranchTree />);
+
+    fireEvent.contextMenu(getByText("main"), {
+      clientX: 20,
+      clientY: 30,
+    });
+    const compare = getByLabelText("Compare with Current");
+    expect(compare.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(compare);
+
+    expect(bridge.request).not.toHaveBeenCalledWith(
+      "openCompareWithCurrent",
+      expect.anything(),
       expect.anything(),
     );
   });

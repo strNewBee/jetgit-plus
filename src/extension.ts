@@ -67,6 +67,19 @@ export function withProgress(
   });
 }
 
+/** Refresh Git Log surfaces bound to the currently active repository only. */
+export function broadcastActiveRepoLogRefresh(
+  messageRouter: MessageRouter,
+  repoRegistry: RepoRegistry,
+): void {
+  const runtime = repoRegistry.getActive();
+  if (!runtime) return;
+  messageRouter.broadcastEvent("gitStateChanged", {
+    scope: "all",
+    repoId: runtime.descriptor.id,
+  });
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   // 1. MessageRouter (always created)
   const messageRouter = new MessageRouter();
@@ -214,7 +227,7 @@ export async function activate(context: vscode.ExtensionContext) {
       },
     ),
     vscode.commands.registerCommand("jetgit-plus.refreshLog", () => {
-      messageRouter.broadcastEvent("gitStateChanged", { scope: "all" });
+      broadcastActiveRepoLogRefresh(messageRouter, repoRegistry);
     }),
     vscode.commands.registerCommand("jetgit-plus.nextDiff", async () => {
       if (diffManager) {

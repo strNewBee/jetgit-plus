@@ -20,6 +20,7 @@ import type {
 import { useRepoStore } from "./repo-store";
 
 const DEFAULT_LOG_BATCH_SIZE = 200;
+const REPO_REFRESH_DEBOUNCE_MS = 100;
 
 export interface PanelFilter {
   searchQuery: string;
@@ -335,6 +336,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
   let navigationGeneration = 0;
   let activeLogLoad: Promise<void> | null = null;
   let filterRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let repoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let currentReachabilityRef: GitRefIdentity | null = null;
   // Repository initialization is an intent, not a property of one request. A
   // watcher refresh may supersede the first request before branches resolve;
@@ -351,6 +353,10 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     if (filterRefreshTimer) {
       clearTimeout(filterRefreshTimer);
       filterRefreshTimer = null;
+    }
+    if (repoRefreshTimer) {
+      clearTimeout(repoRefreshTimer);
+      repoRefreshTimer = null;
     }
   }
 
@@ -472,6 +478,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
     async fetchInitialData(fetchOptions = {}) {
       const generation = ++logLoadGeneration;
+      const selectionGenerationAtStart = selectionGeneration;
       const currentSelection = get();
       const requestedBatchSize = fetchOptions.preserveSelection
         ? Math.max(DEFAULT_LOG_BATCH_SIZE, currentSelection.commits.length)
@@ -597,6 +604,18 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
 
           const { pendingSelectionFromFilter, collapsedIntermediates } = get();
           const visible = filterCommits(commits, collapsedIntermediates);
+          const latestSelection = get();
+          const selectionChangedDuringLoad =
+            selectionGeneration !== selectionGenerationAtStart;
+          const selectionToRestore = selectionChangedDuringLoad
+            ? {
+                selectedCommitHash: latestSelection.selectedCommitHash,
+                selectedCommitHashes: [...latestSelection.selectedCommitHashes],
+                lastSelectedCommitHash: latestSelection.lastSelectedCommitHash,
+                commitFiles: [...latestSelection.commitFiles],
+                selectedFilePath: latestSelection.selectedFilePath,
+              }
+            : selectionToPreserve;
 
           // Check if we need to restore selection from a cleared filter.
           if (pendingSelectionFromFilter.length > 0) {
@@ -640,9 +659,9 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             }
           }
 
-          if (selectionToPreserve) {
+          if (selectionToRestore) {
             const commitHashes = new Set(commits.map((commit) => commit.hash));
-            const validHashes = selectionToPreserve.selectedCommitHashes.filter(
+            const validHashes = selectionToRestore.selectedCommitHashes.filter(
               (hash) => commitHashes.has(hash),
             );
             const validSet = new Set(validHashes);
@@ -675,14 +694,14 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
             }
 
             const selectedCommitHash =
-              selectionToPreserve.selectedCommitHash &&
-              validSet.has(selectionToPreserve.selectedCommitHash)
-                ? selectionToPreserve.selectedCommitHash
+              selectionToRestore.selectedCommitHash &&
+              validSet.has(selectionToRestore.selectedCommitHash)
+                ? selectionToRestore.selectedCommitHash
                 : orderedHashes[0];
             const lastSelectedCommitHash =
-              selectionToPreserve.lastSelectedCommitHash &&
-              validSet.has(selectionToPreserve.lastSelectedCommitHash)
-                ? selectionToPreserve.lastSelectedCommitHash
+              selectionToRestore.lastSelectedCommitHash &&
+              validSet.has(selectionToRestore.lastSelectedCommitHash)
+                ? selectionToRestore.lastSelectedCommitHash
                 : orderedHashes[0];
             const fileGeneration = ++selectionGeneration;
             set({
@@ -699,8 +718,8 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               selectedCommitHash,
               selectedCommitHashes: validHashes,
               lastSelectedCommitHash,
-              commitFiles: selectionToPreserve.commitFiles,
-              selectedFilePath: selectionToPreserve.selectedFilePath,
+              commitFiles: selectionToRestore.commitFiles,
+              selectedFilePath: selectionToRestore.selectedFilePath,
               rangeOldest: orderedHashes[orderedHashes.length - 1],
               rangeNewest: orderedHashes[0],
               pendingSelectionFromFilter: [],
@@ -714,7 +733,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               fileGeneration === selectionGeneration
             ) {
               const nextFiles = files ?? [];
-              const preservedFile = selectionToPreserve.selectedFilePath;
+              const preservedFile = selectionToRestore.selectedFilePath;
               set({
                 commitFiles: nextFiles,
                 selectedFilePath:
@@ -1379,13 +1398,25 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     recomputeOperationInProgress();
   }
 
+  function scheduleRepoRefresh(repoId: string): void {
+    if (repoRefreshTimer) clearTimeout(repoRefreshTimer);
+    repoRefreshTimer = setTimeout(() => {
+      repoRefreshTimer = null;
+      if (disposed || repoId !== visibleRepoId()) return;
+      void store.getState().refresh({
+        preserveSelection: options.history.kind === "comparison",
+      });
+    }, REPO_REFRESH_DEBOUNCE_MS);
+  }
+
   const unsubscribeEvents = options.bridge.onEvent((event, data) => {
-    if (event === "gitStateChanged") {
+    const refreshesComparison =
+      event === "gitStateChanged" ||
+      (event === "commitStateChanged" && options.history.kind === "comparison");
+    if (refreshesComparison) {
       const { repoId } = data as { repoId?: string };
-      if (!repoId || repoId === visibleRepoId()) {
-        void store.getState().refresh({
-          preserveSelection: options.history.kind === "comparison",
-        });
+      if (repoId && repoId === visibleRepoId()) {
+        scheduleRepoRefresh(repoId);
       }
     }
     if (

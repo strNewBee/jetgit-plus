@@ -120,6 +120,20 @@ describe("git log store instances", () => {
       { repoId: "repo-fixed" },
     );
 
+    fixedRequest.mockClear();
+    await fixed.store
+      .getState()
+      .requestFromSurface(
+        "openFile",
+        { filePath: "src/conflict.ts" },
+        { repoId: "repo-conflict" },
+      );
+    expect(fixedRequest).toHaveBeenCalledWith(
+      "openFile",
+      { filePath: "src/conflict.ts" },
+      { repoId: "repo-fixed" },
+    );
+
     const ordinaryRequest = vi.fn().mockResolvedValue(undefined);
     const ordinary = createGitLogStore({
       repoId: null,
@@ -434,6 +448,101 @@ describe("git log store instances", () => {
       "branch-b-tip",
     ]);
     instance.dispose();
+  });
+
+  it("does not overwrite a user selection made while a graph refresh is pending", async () => {
+    vi.useFakeTimers();
+    const pendingGraph = deferred<ReturnType<typeof graphResult>>();
+    const request = vi.fn(async (command: string) => {
+      if (command === "getGraphData") return pendingGraph.promise;
+      if (
+        command === "getBranches" ||
+        command === "getTags" ||
+        command === "getCommitRangeFiles"
+      ) {
+        return [];
+      }
+      return null;
+    });
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: { kind: "ordinary" },
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: createFakeBridge(request).bridge,
+    });
+    const first = commit("first");
+    const chosen = commit("chosen-during-refresh");
+    instance.store.setState({
+      commits: [first, chosen],
+      visibleCommits: [first, chosen],
+      selectedCommitHash: "first",
+      selectedCommitHashes: ["first"],
+      lastSelectedCommitHash: "first",
+    });
+
+    try {
+      const refresh = instance.store.getState().fetchInitialData();
+      await instance.store.getState().selectCommit(chosen.hash);
+      pendingGraph.resolve(graphResult([first, chosen]));
+      await vi.runAllTimersAsync();
+      await refresh;
+
+      expect(instance.store.getState().selectedCommitHash).toBe(chosen.hash);
+      expect(instance.store.getState().selectedCommitHashes).toEqual([
+        chosen.hash,
+      ]);
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces matching comparison events and ignores unscoped or other-repo events", async () => {
+    vi.useFakeTimers();
+    const graphRequest = vi.fn();
+    const request = vi.fn(async (command: string) => {
+      if (command === "getGraphData") {
+        graphRequest();
+        return graphResult([commit("tip")]);
+      }
+      if (
+        command === "getBranches" ||
+        command === "getTags" ||
+        command === "getCommitRangeFiles"
+      ) {
+        return [];
+      }
+      return null;
+    });
+    const fake = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+
+    try {
+      for (const handler of fake.handlers) {
+        handler("gitStateChanged", { scope: "all" });
+        handler("gitStateChanged", { scope: "branches", repoId: "repo-b" });
+        handler("gitStateChanged", { scope: "all", repoId: "repo-a" });
+        handler("gitStateChanged", { scope: "log", repoId: "repo-a" });
+        handler("commitStateChanged", { repoId: "repo-a" });
+      }
+
+      expect(graphRequest).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(graphRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      instance.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("releases its event subscription exactly once when disposed", () => {

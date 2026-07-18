@@ -220,20 +220,21 @@ describe("resolveCurrentCompareRef", () => {
     });
   });
 
-  it("uses literal HEAD with a short hash display when detached", async () => {
+  it("pins detached HEAD to its resolved commit while keeping a short display name", async () => {
     const resolvedRefs: string[] = [];
+    const headHash = "1234567890abcdef1234567890abcdef12345678";
     const gitService = {
       getCurrentBranch: async () => null,
       resolveCommitRef: async (ref: string) => {
         resolvedRefs.push(ref);
-        return "1234567890abcdef";
+        return headHash;
       },
     };
 
     assert.deepStrictEqual(await resolveCurrentCompareRef(gitService), {
       type: "detached",
       name: "1234567",
-      fullRef: "HEAD",
+      fullRef: headHash,
     });
     assert.deepStrictEqual(resolvedRefs, ["HEAD"]);
   });
@@ -249,6 +250,32 @@ describe("resolveCurrentCompareRef", () => {
 });
 
 describe("openCompareWithCurrent handler", () => {
+  it("rejects through the router error channel when HEAD has no commit", async () => {
+    let handler: CommandHandler | undefined;
+    const router = {
+      handle(_command: string, candidate: CommandHandler) {
+        handler = candidate;
+      },
+    } as unknown as MessageRouter;
+    registerComparePanelHandlers(router, {
+      open() {
+        assert.fail("a comparison panel must not open without a current ref");
+      },
+    });
+
+    assert.ok(handler);
+    await assert.rejects(
+      handler({ ref: selected }, {
+        repoId: "repo-a",
+        gitService: {
+          getCurrentBranch: async () => null,
+          resolveCommitRef: async () => null,
+        } as unknown as GitService,
+      } as RequestContext),
+      /No current Git ref/,
+    );
+  });
+
   it("keeps the request's captured repo and Git service across an async repo switch", async () => {
     let handler: CommandHandler | undefined;
     const router = {

@@ -8,9 +8,11 @@ This file records intentionally deferred Git dashboard work so temporary UI remo
 
 Reintroduce this only after its semantics can match JetBrains closely. A branch qualifies when the commits exclusive to that branch are authored by the current Git user; identity matching must respect configured name/email and `.mailmap`. The implementation needs graph-aware ancestry queries, a cached per-repository author index, multi-repo invalidation, and acceptable performance on large histories. Until then, no placeholder button should be shown.
 
-### Compare with Current
+### Extended commit actions
 
-Restore branch/ref comparison with repository-safe content URIs. Both sides must carry the selected repository id and full ref (`refs/heads/...`, `refs/remotes/...`, or `refs/tags/...`) through `buildGitContentUri`, and the comparison must remain pinned to that repository if the global active repository changes.
+After 0.5.2 introduces the shared commit action registry, add the remaining JetBrains-style actions through that single registry so the ordinary Git Log and branch comparison views gain them together. Deferred actions include Create Patch, Compare with Local, Show Repository at Revision, Undo/Edit/Fixup/Squash and interactive rebase, Push commits up to the selection, move a branch to the selected commit, and child/parent commit navigation.
+
+Do not add view-specific copies of these menus. Each action must declare repository-bound execution context, visibility and enabled-state rules, and the refresh scope required after mutation.
 
 ### Batch and strategy-aware Update
 
