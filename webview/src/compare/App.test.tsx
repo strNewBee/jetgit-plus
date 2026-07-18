@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => {
       | "repo-not-found"
       | "generic-error",
     omitTopSecond: false,
+    deepHistory: false,
+    omittedTopHash: null as string | null,
   };
 
   const commit = (hash: string, subject: string) => ({
@@ -83,17 +85,41 @@ const mocks = vi.hoisted(() => {
       }
 
       const isTop = revision?.includeRef.fullRef === "refs/heads/feature";
-      const commits =
+      const topCommits = state.deepHistory
+        ? Array.from({ length: 250 }, (_, index) => {
+            const position = index + 1;
+            return commit(
+              `top-${position}`,
+              position === 1
+                ? "Top first"
+                : position === 2
+                  ? "Top second"
+                  : position === 250
+                    ? "Top deep"
+                    : `Top ${position}`,
+            );
+          })
+        : [commit("top-1", "Top first"), commit("top-2", "Top second")];
+      const allCommits =
         state.graphMode === "empty" || params.search
           ? []
           : isTop
-            ? state.omitTopSecond
-              ? [commit("top-1", "Top first")]
-              : [commit("top-1", "Top first"), commit("top-2", "Top second")]
+            ? topCommits.filter(
+                ({ hash }) =>
+                  (!state.omitTopSecond || hash !== "top-2") &&
+                  hash !== state.omittedTopHash,
+              )
             : [
                 commit("bottom-1", "Bottom first"),
                 commit("bottom-2", "Bottom second"),
               ];
+      const skip = command === "loadMoreLog" ? Number(params.skip ?? 0) : 0;
+      const count = Number(
+        command === "loadMoreLog"
+          ? (params.count ?? 200)
+          : (params.maxCount ?? 200),
+      );
+      const commits = allCommits.slice(skip, skip + count);
       return {
         status: "ok" as const,
         graphData: { commits, lanes: {} },
@@ -102,7 +128,7 @@ const mocks = vi.hoisted(() => {
           laneColors: [],
           nextColorIndex: 0,
         },
-        hasMore: false,
+        hasMore: skip + commits.length < allCommits.length,
       };
     },
   );
@@ -170,6 +196,8 @@ vi.mock("../panel/components/GitGraphPanel", async () => {
     }) {
       const commits = useGitLogStore((store) => store.visibleCommits);
       const selectCommit = useGitLogStore((store) => store.selectCommit);
+      const loadMore = useGitLogStore((store) => store.loadMore);
+      const loading = useGitLogStore((store) => store.loading);
       return (
         <div>
           {commits.map((commit) => (
@@ -183,6 +211,13 @@ vi.mock("../panel/components/GitGraphPanel", async () => {
           ))}
           <button type="button" onClick={() => void onRefreshComparison?.()}>
             Refresh comparison
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void loadMore()}
+          >
+            Load more
           </button>
         </div>
       );
@@ -273,6 +308,8 @@ describe("CompareApp", () => {
     seedRoot();
     mocks.state.graphMode = "data";
     mocks.state.omitTopSecond = false;
+    mocks.state.deepHistory = false;
+    mocks.state.omittedTopHash = null;
     mocks.request.mockClear();
     mocks.onEvent.mockClear();
     mocks.eventListeners.clear();
@@ -384,6 +421,67 @@ describe("CompareApp", () => {
     ).toBeTruthy();
 
     mocks.state.omitTopSecond = true;
+    emit("comparePanelRefresh");
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId("compare-top-detail")).getByText(
+          "No selection",
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("preserves a second-page selection across panel and watcher refreshes until it disappears", async () => {
+    mocks.state.deepHistory = true;
+    const view = await renderLoaded();
+    const top = view.getByTestId("compare-top");
+    await waitFor(
+      () =>
+        expect(
+          within(top).getByRole<HTMLButtonElement>("button", {
+            name: "Load more",
+          }).disabled,
+        ).toBe(false),
+      { timeout: 2000 },
+    );
+    fireEvent.click(within(top).getByRole("button", { name: "Load more" }));
+    const deepCommit = await within(top).findByRole("button", {
+      name: "Top deep",
+    });
+    fireEvent.click(deepCommit);
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId("compare-top-detail")).getByText("Top deep"),
+      ).toBeTruthy(),
+    );
+
+    mocks.request.mockClear();
+    emit("comparePanelRefresh");
+    await waitFor(() => expect(graphRequests()).toHaveLength(2));
+    const topRefresh = graphRequests().find(
+      ({ params }) =>
+        (params as { revision?: { includeRef?: GitRefIdentity } }).revision
+          ?.includeRef?.fullRef === selectedRef.fullRef,
+    );
+    expect(topRefresh?.params).toEqual(
+      expect.objectContaining({ maxCount: 250 }),
+    );
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("Top deep"),
+    ).toBeTruthy();
+
+    await waitFor(
+      () => expect(within(top).queryByLabelText("Loading")).toBeNull(),
+      { timeout: 2000 },
+    );
+    mocks.request.mockClear();
+    emit("gitStateChanged", { repoId: "repo-a" });
+    await waitFor(() => expect(graphRequests()).toHaveLength(2));
+    expect(
+      within(view.getByTestId("compare-top-detail")).getByText("Top deep"),
+    ).toBeTruthy();
+
+    mocks.state.omittedTopHash = "top-250";
     emit("comparePanelRefresh");
     await waitFor(() =>
       expect(

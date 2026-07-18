@@ -310,6 +310,86 @@ describe("git log store instances", () => {
     instance.dispose();
   });
 
+  it("widens preserve-selection refreshes to the loaded depth and uses that batch for hasMore", async () => {
+    let repositoryCommits = Array.from({ length: 250 }, (_, index) =>
+      commit(`commit-${index}`),
+    );
+    const graphBatchSizes: number[] = [];
+    const request = vi.fn(async (command: string, params?: unknown) => {
+      const query = (params ?? {}) as {
+        maxCount?: number;
+        skip?: number;
+        count?: number;
+      };
+      if (command === "getGraphData") {
+        const batchSize = query.maxCount ?? 200;
+        graphBatchSizes.push(batchSize);
+        return graphResult(repositoryCommits.slice(0, batchSize));
+      }
+      if (command === "loadMoreLog") {
+        const skip = query.skip ?? 0;
+        const count = query.count ?? 200;
+        return graphResult(repositoryCommits.slice(skip, skip + count));
+      }
+      if (
+        command === "getBranches" ||
+        command === "getTags" ||
+        command === "getCommitRangeFiles"
+      ) {
+        return [];
+      }
+      return null;
+    });
+    const fake = createFakeBridge(request);
+    const instance = createGitLogStore({
+      repoId: "repo-a",
+      history: comparisonHistory({
+        kind: "ref",
+        ref: { type: "local", name: "feature", fullRef: "refs/heads/feature" },
+      }),
+      followGlobalActiveRepo: false,
+      showCurrentReachability: false,
+      bridge: fake.bridge,
+    });
+
+    await instance.store.getState().fetchInitialData();
+    expect(graphBatchSizes).toEqual([200]);
+    await instance.store.getState().loadMore();
+    expect(instance.store.getState().commits).toHaveLength(250);
+    await instance.store.getState().selectCommit("commit-240");
+
+    repositoryCommits = repositoryCommits.slice(0, 249);
+    await instance.store.getState().refresh({ preserveSelection: true });
+    expect(graphBatchSizes.at(-1)).toBe(250);
+    expect(instance.store.getState().selectedCommitHash).toBe("commit-240");
+    expect(instance.store.getState().hasMore).toBe(false);
+
+    const watcherRequestCount = graphBatchSizes.length;
+    for (const handler of fake.handlers) {
+      handler("gitStateChanged", { repoId: "repo-a" });
+    }
+    await vi.waitFor(() =>
+      expect(graphBatchSizes.length).toBeGreaterThan(watcherRequestCount),
+    );
+    await vi.waitFor(
+      () => expect(instance.store.getState().loading).toBe(false),
+      { timeout: 2_000 },
+    );
+    expect(instance.store.getState().selectedCommitHash).toBe("commit-240");
+
+    repositoryCommits = repositoryCommits.filter(
+      ({ hash }) => hash !== "commit-240",
+    );
+    await instance.store.getState().refresh({ preserveSelection: true });
+    expect(instance.store.getState()).toMatchObject({
+      selectedCommitHash: null,
+      selectedCommitHashes: [],
+      commitFiles: [],
+      selectedFilePath: null,
+    });
+    instance.dispose();
+  });
+
   it("rejects a stale graph response after a newer filter intent", async () => {
     const older = deferred<ReturnType<typeof graphResult>>();
     const newer = deferred<ReturnType<typeof graphResult>>();
@@ -561,6 +641,7 @@ describe("panel-store host-backed filters", () => {
       expect(request).toHaveBeenCalledWith(
         "getGraphData",
         expect.objectContaining({
+          maxCount: 200,
           search: "fix race",
           author: "Ada",
           since: expect.any(String),

@@ -19,6 +19,8 @@ import type {
 } from "../types/git";
 import { useRepoStore } from "./repo-store";
 
+const DEFAULT_LOG_BATCH_SIZE = 200;
+
 export interface PanelFilter {
   searchQuery: string;
   branch: string;
@@ -471,6 +473,9 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
     async fetchInitialData(fetchOptions = {}) {
       const generation = ++logLoadGeneration;
       const currentSelection = get();
+      const requestedBatchSize = fetchOptions.preserveSelection
+        ? Math.max(DEFAULT_LOG_BATCH_SIZE, currentSelection.commits.length)
+        : DEFAULT_LOG_BATCH_SIZE;
       const selectionToPreserve =
         fetchOptions.preserveSelection &&
         currentSelection.selectedCommitHashes.length > 0
@@ -498,7 +503,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
           const tagsRequest = request("getTags") as Promise<TagInfo[] | null>;
           const requestGraph = (currentRef: GitRefIdentity | null) =>
             request("getGraphData", {
-              maxCount: 200,
+              maxCount: requestedBatchSize,
               ...historyParams,
               ...queryParams(requestedFilter),
               ...(options.showCurrentReachability && currentRef
@@ -588,7 +593,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
           const queryHasMore =
             graphResult && "status" in graphResult
               ? graphResult.hasMore
-              : commits.length >= 200;
+              : commits.length >= requestedBatchSize;
 
           const { pendingSelectionFromFilter, collapsedIntermediates } = get();
           const visible = filterCommits(commits, collapsedIntermediates);
@@ -806,7 +811,7 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
         try {
           const result = (await request("loadMoreLog", {
             skip: commits.length,
-            count: 200,
+            count: DEFAULT_LOG_BATCH_SIZE,
             snapshot: laneSnapshot,
             ...historyParams,
             ...queryParams(filter),
@@ -851,7 +856,9 @@ export function createGitLogStore(options: GitLogStoreOptions): GitLogStore {
               graphLayout: { ...get().graphLayout, ...result.graphData.lanes },
               laneSnapshot: result.snapshot,
               hasMore:
-                "status" in result ? result.hasMore : newCommits.length >= 200,
+                "status" in result
+                  ? result.hasMore
+                  : newCommits.length >= DEFAULT_LOG_BATCH_SIZE,
               unavailableRef: null,
               loadError: null,
             });
