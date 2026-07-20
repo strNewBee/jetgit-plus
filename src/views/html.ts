@@ -14,13 +14,13 @@ export function getWebviewHtml(
   extra?: Record<string, string>,
 ): string {
   const distUri = vscode.Uri.joinPath(extensionUri, "dist", "webview");
-  const scriptUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(distUri, "assets", "main.js"),
-  );
-  const styleUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(distUri, "assets", "style.css"),
-  );
   const nonce = getNonce();
+  const scriptUri = webview
+    .asWebviewUri(vscode.Uri.joinPath(distUri, "assets", "main.js"))
+    .with({ query: nonce });
+  const styleUri = webview
+    .asWebviewUri(vscode.Uri.joinPath(distUri, "assets", "style.css"))
+    .with({ query: nonce });
 
   const dataAttrs = [`data-mode="${mode}"`];
   if (extra) {

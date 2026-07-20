@@ -8,13 +8,16 @@ const stylesheet = readFileSync(
 );
 
 describe("commit reachability theme", () => {
-  it("uses the full VS Code selection background for reachable rows", () => {
+  it("mixes the VS Code accent with the editor background for reachable rows", () => {
     const declaration = stylesheet.match(
       /--current-reachable-bg:\s*[^;]+;/,
     )?.[0];
 
-    expect(declaration).toBe(
-      "--current-reachable-bg: var(--vscode-list-activeSelectionBackground, #04395e);",
+    expect(declaration).toMatch(
+      /--current-reachable-bg:\s*color-mix\(\s*in srgb,\s*var\(--vscode-focusBorder,\s*#007fd4\)\s*28%,\s*var\(--vscode-editor-background,\s*#1e1e1e\)\s*\);/,
+    );
+    expect(declaration).not.toContain(
+      "--vscode-list-activeSelectionBackground",
     );
   });
 
