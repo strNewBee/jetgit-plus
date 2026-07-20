@@ -5,6 +5,11 @@
   --hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
   --selected-bg: var(--vscode-list-activeSelectionBackground, #04395e);
   --selected-fg: var(--vscode-list-activeSelectionForeground, #fff);
+  --commit-row-hover-bg: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 14%,
+    var(--vscode-editor-background, #1e1e1e)
+  );
   --current-reachable-bg: color-mix(
     in srgb,
     var(--vscode-focusBorder, #007fd4) 28%,
@@ -107,6 +112,9 @@ button:disabled {
 }
 .selectable-row:hover {
   background: var(--hover-bg);
+}
+.commit-row:hover:not(.current-reachable):not(.selected) {
+  background: var(--commit-row-hover-bg);
 }
 .selectable-row.selected {
   background: var(--selected-bg);

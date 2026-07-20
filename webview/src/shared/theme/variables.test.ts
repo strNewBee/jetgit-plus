@@ -8,6 +8,19 @@ const stylesheet = readFileSync(
 );
 
 describe("commit reachability theme", () => {
+  it("gives an ordinary unselected commit a visible hover fill", () => {
+    const declaration = stylesheet.match(
+      /--commit-row-hover-bg:\s*[^;]+;/,
+    )?.[0];
+    const hoverRule = stylesheet.match(
+      /\.commit-row:hover:not\(\.current-reachable\):not\(\.selected\)[\s\S]*?\{([\s\S]*?)\}/,
+    )?.[1];
+
+    expect(declaration ?? "").toContain("color-mix(");
+    expect(declaration ?? "").toContain("14%");
+    expect(hoverRule).toContain("background: var(--commit-row-hover-bg)");
+  });
+
   it("outlines a selected commit outside the reachable range", () => {
     const selectedRule = stylesheet.match(
       /\.commit-row\.selected[\s\S]*?\{([\s\S]*?)\}/,
