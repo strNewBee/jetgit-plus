@@ -7,8 +7,8 @@
   --selected-fg: var(--vscode-list-activeSelectionForeground, #fff);
   --current-reachable-bg: color-mix(
     in srgb,
-    var(--vscode-list-activeSelectionBackground, #04395e) 62%,
-    var(--app-bg)
+    var(--vscode-list-inactiveSelectionBackground) 62%,
+    transparent
   );
   --button-bg: var(--vscode-button-background, #0e639c);
   --button-fg: var(--vscode-button-foreground, #fff);

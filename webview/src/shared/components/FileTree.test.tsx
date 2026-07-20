@@ -27,4 +27,24 @@ describe("FileTree", () => {
     expect((row as HTMLElement).style.userSelect).toBe("none");
     expect(row?.classList.contains("selected")).toBe(true);
   });
+
+  it("renders a selected changed file with the full selection colors", () => {
+    const view = render(
+      <FileTree
+        files={[file]}
+        viewMode="tree"
+        selectedFiles={[file.newPath]}
+        onFileClick={vi.fn()}
+      />,
+    );
+
+    const row = view.getByText("App.tsx").closest(".selectable-row");
+    expect(row).not.toBeNull();
+    expect((row as HTMLElement).style.background).toBe(
+      "var(--vscode-list-activeSelectionBackground, #04395e)",
+    );
+    expect((row as HTMLElement).style.color).toBe(
+      "var(--vscode-list-activeSelectionForeground, #fff)",
+    );
+  });
 });

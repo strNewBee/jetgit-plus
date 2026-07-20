@@ -438,7 +438,12 @@ function FileRow({
         alignItems: "center",
         gap: 4,
         padding: `2px 12px 2px ${12 + depth * 16}px`,
-        color: statusColor,
+        background: isSelected
+          ? "var(--vscode-list-activeSelectionBackground, #04395e)"
+          : undefined,
+        color: isSelected
+          ? "var(--vscode-list-activeSelectionForeground, #fff)"
+          : statusColor,
         userSelect: "none",
       }}
     >
