@@ -75,7 +75,8 @@ describe("FileTree", () => {
     expect(directory).not.toBeNull();
     expect(directory?.getAttribute("aria-expanded")).toBe("true");
     expect(directory?.querySelector("[data-file-tree-chevron]")).not.toBeNull();
-    expect(view.queryByText("App.tsx")).not.toBeNull();
+    const fileRow = view.getByText("App.tsx").closest(".selectable-row");
+    expect(fileRow?.querySelector("[data-file-tree-indent]")).not.toBeNull();
 
     fireEvent.click(directory as HTMLElement);
     expect(directory?.getAttribute("aria-expanded")).toBe("false");
@@ -97,5 +98,6 @@ describe("FileTree", () => {
     );
 
     expect(view.container.querySelector("[data-file-tree-chevron]")).toBeNull();
+    expect(view.container.querySelector("[data-file-tree-indent]")).toBeNull();
   });
 });

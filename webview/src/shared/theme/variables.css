@@ -114,6 +114,11 @@ button:disabled {
 .selectable-row.selected:hover {
   background: var(--selected-bg);
 }
+.commit-row.selected {
+  outline: 1px solid
+    var(--vscode-list-focusOutline, var(--vscode-focusBorder, #007fd4));
+  outline-offset: -1px;
+}
 .selectable-row.current-reachable {
   background: var(--current-reachable-bg);
 }
@@ -137,7 +142,15 @@ body.vscode-high-contrast .selectable-row.current-reachable.selected {
   outline: 2px solid var(--vscode-focusBorder, CanvasText);
   outline-offset: -2px;
 }
+body.vscode-high-contrast .commit-row.selected {
+  outline: 2px solid var(--vscode-focusBorder, CanvasText);
+  outline-offset: -2px;
+}
 @media (forced-colors: active) {
+  .commit-row.selected {
+    outline: 2px solid var(--vscode-focusBorder, Highlight);
+    outline-offset: -2px;
+  }
   .selectable-row.current-reachable {
     outline: 1px solid var(--vscode-contrastBorder, CanvasText);
     outline-offset: -1px;

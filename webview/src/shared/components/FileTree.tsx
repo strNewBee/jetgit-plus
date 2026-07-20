@@ -317,6 +317,7 @@ function FileTreeNodeView({
         file={node.file}
         name={node.name}
         depth={depth}
+        showDisclosureSpacer
         isSelected={selectedFiles.includes(filePath)}
         onClick={(e) => node.file && onFileClick(e, node.file)}
         onDoubleClick={
@@ -428,6 +429,7 @@ function FileRow({
   file,
   name,
   depth,
+  showDisclosureSpacer = false,
   isSelected,
   onClick,
   onDoubleClick,
@@ -439,6 +441,7 @@ function FileRow({
   file: DiffFile;
   name: string;
   depth: number;
+  showDisclosureSpacer?: boolean;
   isSelected: boolean;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
@@ -479,6 +482,13 @@ function FileRow({
         userSelect: "none",
       }}
     >
+      {showDisclosureSpacer && (
+        <span
+          aria-hidden="true"
+          data-file-tree-indent
+          style={{ width: 12, flexShrink: 0 }}
+        />
+      )}
       <FileIcon style={{ flexShrink: 0, width: 16, height: 16 }} />
       <span
         style={{

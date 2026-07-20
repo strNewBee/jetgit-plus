@@ -8,6 +8,17 @@ const stylesheet = readFileSync(
 );
 
 describe("commit reachability theme", () => {
+  it("outlines a selected commit outside the reachable range", () => {
+    const selectedRule = stylesheet.match(
+      /\.commit-row\.selected[\s\S]*?\{([\s\S]*?)\}/,
+    )?.[1];
+
+    expect(selectedRule).toMatch(
+      /outline:\s*1px solid\s+var\(--vscode-list-focusOutline,\s*var\(--vscode-focusBorder,\s*#007fd4\)\)/,
+    );
+    expect(selectedRule).toContain("outline-offset: -1px");
+  });
+
   it("defines progressively stronger reachable, hover, and selected fills", () => {
     const declarations = [
       ["--current-reachable-bg", 28],
