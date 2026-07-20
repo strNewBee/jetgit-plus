@@ -3,7 +3,7 @@
   "displayName": "JetGit Plus - IDEA-style Git Graph & Commit for VS Code",
   "publisher": "strNewBee",
   "description": "JetGit Plus brings an IntelliJ IDEA-style Git workflow to VS Code and Cursor: git graph visualization, IDEA-style commit panel with shelve/stash, branch management, cherry-pick, rebase, merge, 3-way merge editor, and rich context menus.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {

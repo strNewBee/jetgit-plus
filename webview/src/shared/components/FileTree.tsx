@@ -19,6 +19,28 @@ export const STATUS_COLORS: Record<string, string> = {
   conflicts: "#d1675a",
 };
 
+function Chevron({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+      data-file-tree-chevron
+      style={{ flexShrink: 0 }}
+    >
+      {collapsed ? (
+        <polyline points="4,2.5 8,6 4,9.5" />
+      ) : (
+        <polyline points="2.5,4 6,8 9.5,4" />
+      )}
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tree data structure
 // ---------------------------------------------------------------------------
@@ -295,6 +317,7 @@ function FileTreeNodeView({
         file={node.file}
         name={node.name}
         depth={depth}
+        showDisclosureSpacer
         isSelected={selectedFiles.includes(filePath)}
         onClick={(e) => node.file && onFileClick(e, node.file)}
         onDoubleClick={
@@ -319,7 +342,16 @@ function FileTreeNodeView({
     <div>
       <div
         className="selectable-row"
+        role="treeitem"
+        tabIndex={0}
+        aria-expanded={!isCollapsed}
         onClick={() => onToggle(node.fullPath)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle(node.fullPath);
+          }
+        }}
         style={{
           padding: `2px 12px 2px ${12 + depth * 16}px`,
           userSelect: "none",
@@ -328,6 +360,7 @@ function FileTreeNodeView({
           gap: 4,
         }}
       >
+        <Chevron collapsed={isCollapsed} />
         {isCollapsed ? (
           <IconFolder
             style={{
@@ -396,6 +429,7 @@ function FileRow({
   file,
   name,
   depth,
+  showDisclosureSpacer = false,
   isSelected,
   onClick,
   onDoubleClick,
@@ -407,6 +441,7 @@ function FileRow({
   file: DiffFile;
   name: string;
   depth: number;
+  showDisclosureSpacer?: boolean;
   isSelected: boolean;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
@@ -447,6 +482,13 @@ function FileRow({
         userSelect: "none",
       }}
     >
+      {showDisclosureSpacer && (
+        <span
+          aria-hidden="true"
+          data-file-tree-indent
+          style={{ width: 12, flexShrink: 0 }}
+        />
+      )}
       <FileIcon style={{ flexShrink: 0, width: 16, height: 16 }} />
       <span
         style={{
