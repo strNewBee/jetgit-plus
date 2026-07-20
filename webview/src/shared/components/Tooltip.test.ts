@@ -1,7 +1,34 @@
-import { describe, expect, it } from "vitest";
-import { computeTooltipPosition, isTooltipContentTruncated } from "./Tooltip";
+import { act, fireEvent, render } from "@testing-library/react";
+import { createElement } from "react";
+import { describe, expect, it, vi } from "vitest";
+import {
+  computeTooltipPosition,
+  isTooltipContentTruncated,
+  Tooltip,
+} from "./Tooltip";
 
 describe("computeTooltipPosition", () => {
+  it("sizes tooltip content before clamping it away from the viewport edge", async () => {
+    vi.useFakeTimers();
+    const view = render(
+      createElement(
+        Tooltip,
+        { text: "Flat List", delay: 0 },
+        createElement("button", { type: "button" }, "Flat"),
+      ),
+    );
+
+    try {
+      fireEvent.mouseEnter(view.getByRole("button", { name: "Flat" }));
+      await act(async () => vi.runAllTimersAsync());
+      const popup = document.querySelector<HTMLElement>(".tooltip-popup");
+      expect(popup?.style.width).toBe("max-content");
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("clamps a long tooltip inside the viewport without alternating edges", () => {
     const input = {
       trigger: { top: 80, bottom: 100, left: 286, width: 20 },

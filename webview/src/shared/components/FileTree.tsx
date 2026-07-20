@@ -439,6 +439,7 @@ function FileRow({
         gap: 4,
         padding: `2px 12px 2px ${12 + depth * 16}px`,
         color: statusColor,
+        userSelect: "none",
       }}
     >
       <FileIcon style={{ flexShrink: 0, width: 16, height: 16 }} />

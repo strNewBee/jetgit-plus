@@ -182,6 +182,7 @@ export function Tooltip({
             className="tooltip-popup"
             style={{
               position: "fixed",
+              width: "max-content",
               top: coords.top,
               left: coords.left,
               transform:
