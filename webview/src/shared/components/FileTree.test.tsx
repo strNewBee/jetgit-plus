@@ -1,4 +1,5 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { DiffFile } from "../types/git";
 import { FileTree } from "./FileTree";
@@ -46,5 +47,55 @@ describe("FileTree", () => {
     expect((row as HTMLElement).style.color).toBe(
       "var(--vscode-list-activeSelectionForeground, #fff)",
     );
+  });
+
+  it("shows an accessible chevron and toggles a directory from the full row", () => {
+    function ControlledTree() {
+      const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+      return (
+        <FileTree
+          files={[file]}
+          viewMode="tree"
+          selectedFiles={[]}
+          onFileClick={vi.fn()}
+          collapsed={collapsed}
+          onToggle={(key) =>
+            setCollapsed((previous) => ({
+              ...previous,
+              [key]: !previous[key],
+            }))
+          }
+        />
+      );
+    }
+
+    const view = render(<ControlledTree />);
+    const directory = view.getByText("webview/src").closest("[role=treeitem]");
+
+    expect(directory).not.toBeNull();
+    expect(directory?.getAttribute("aria-expanded")).toBe("true");
+    expect(directory?.querySelector("[data-file-tree-chevron]")).not.toBeNull();
+    expect(view.queryByText("App.tsx")).not.toBeNull();
+
+    fireEvent.click(directory as HTMLElement);
+    expect(directory?.getAttribute("aria-expanded")).toBe("false");
+    expect(view.queryByText("App.tsx")).toBeNull();
+
+    fireEvent.keyDown(directory as HTMLElement, { key: "Enter" });
+    expect(directory?.getAttribute("aria-expanded")).toBe("true");
+    expect(view.queryByText("App.tsx")).not.toBeNull();
+  });
+
+  it("keeps flat mode free of directory disclosure controls", () => {
+    const view = render(
+      <FileTree
+        files={[file]}
+        viewMode="flat"
+        selectedFiles={[]}
+        onFileClick={vi.fn()}
+      />,
+    );
+
+    expect(view.container.querySelector("[data-file-tree-chevron]")).toBeNull();
   });
 });

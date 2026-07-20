@@ -10,6 +10,16 @@
     var(--vscode-focusBorder, #007fd4) 28%,
     var(--vscode-editor-background, #1e1e1e)
   );
+  --current-reachable-hover-bg: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 40%,
+    var(--vscode-editor-background, #1e1e1e)
+  );
+  --current-reachable-selected-bg: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 58%,
+    var(--vscode-editor-background, #1e1e1e)
+  );
   --button-bg: var(--vscode-button-background, #0e639c);
   --button-fg: var(--vscode-button-foreground, #fff);
   --button-hover-bg: var(--vscode-button-hoverBackground, #1177bb);
@@ -109,12 +119,12 @@ button:disabled {
 }
 .selectable-row.current-reachable:hover,
 .selectable-row.current-reachable:focus-visible {
-  background: var(--vscode-list-hoverBackground, var(--hover-bg));
+  background: var(--current-reachable-hover-bg);
 }
 .selectable-row.current-reachable.selected,
 .selectable-row.current-reachable.selected:hover,
 .selectable-row.current-reachable.selected:focus-visible {
-  background: var(--selected-bg);
+  background: var(--current-reachable-selected-bg);
   outline: 1px solid
     var(--vscode-list-focusOutline, var(--vscode-focusBorder, #007fd4));
   outline-offset: -1px;

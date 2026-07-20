@@ -20,7 +20,10 @@ export function FileChangeTree() {
   });
 
   const [viewMode, setViewMode] = useState<"tree" | "flat">("tree");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapseState, setCollapseState] = useState<{
+    commitHash: string | null;
+    paths: Record<string, boolean>;
+  }>({ commitHash: selectedCommitHash, paths: {} });
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -58,8 +61,18 @@ export function FileChangeTree() {
   }, []);
 
   const toggleCollapse = (key: string) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+    setCollapseState((previous) => {
+      const paths =
+        previous.commitHash === selectedCommitHash ? previous.paths : {};
+      return {
+        commitHash: selectedCommitHash,
+        paths: { ...paths, [key]: !paths[key] },
+      };
+    });
   };
+
+  const collapsed =
+    collapseState.commitHash === selectedCommitHash ? collapseState.paths : {};
 
   const filter = useGitLogStore((s) => s.filter);
 

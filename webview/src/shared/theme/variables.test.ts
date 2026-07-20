@@ -8,24 +8,40 @@ const stylesheet = readFileSync(
 );
 
 describe("commit reachability theme", () => {
-  it("mixes the VS Code accent with the editor background for reachable rows", () => {
-    const declaration = stylesheet.match(
-      /--current-reachable-bg:\s*[^;]+;/,
-    )?.[0];
+  it("defines progressively stronger reachable, hover, and selected fills", () => {
+    const declarations = [
+      ["--current-reachable-bg", 28],
+      ["--current-reachable-hover-bg", 40],
+      ["--current-reachable-selected-bg", 58],
+    ] as const;
 
-    expect(declaration).toMatch(
-      /--current-reachable-bg:\s*color-mix\(\s*in srgb,\s*var\(--vscode-focusBorder,\s*#007fd4\)\s*28%,\s*var\(--vscode-editor-background,\s*#1e1e1e\)\s*\);/,
-    );
-    expect(declaration).not.toContain(
-      "--vscode-list-activeSelectionBackground",
-    );
+    for (const [name, strength] of declarations) {
+      const declaration = stylesheet.match(
+        new RegExp(`${name}:\\s*[^;]+;`),
+      )?.[0];
+      expect(declaration).toBeDefined();
+      expect(declaration ?? "").toContain("color-mix(");
+      expect(declaration ?? "").toContain(`${strength}%`);
+      expect(declaration ?? "").not.toContain(
+        "--vscode-list-activeSelectionBackground",
+      );
+    }
   });
 
   it("keeps the selected commit identifiable inside a highlighted range", () => {
+    const hoverRule = stylesheet.match(
+      /\.selectable-row\.current-reachable:hover,[\s\S]*?\{([\s\S]*?)\}/,
+    )?.[1];
     const selectedRule = stylesheet.match(
       /\.selectable-row\.current-reachable\.selected[\s\S]*?\{([\s\S]*?)\}/,
     )?.[1];
 
+    expect(hoverRule).toContain(
+      "background: var(--current-reachable-hover-bg)",
+    );
+    expect(selectedRule).toContain(
+      "background: var(--current-reachable-selected-bg)",
+    );
     expect(selectedRule).toMatch(
       /outline:\s*1px solid\s+var\(--vscode-list-focusOutline,\s*var\(--vscode-focusBorder,\s*#007fd4\)\)/,
     );

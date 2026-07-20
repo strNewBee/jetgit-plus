@@ -38,6 +38,15 @@ export function FileItem({
         e.stopPropagation();
         onContextMenu(e);
       }}
+      style={{
+        userSelect: "none",
+        background: highlighted
+          ? "var(--vscode-list-activeSelectionBackground, #04395e)"
+          : undefined,
+        color: highlighted
+          ? "var(--vscode-list-activeSelectionForeground, #fff)"
+          : undefined,
+      }}
     >
       <input
         type="checkbox"
@@ -51,7 +60,7 @@ export function FileItem({
       <span
         className="commit-file-name"
         title={file.path}
-        style={{ color: statusColor }}
+        style={{ color: highlighted ? "inherit" : statusColor }}
       >
         {fileName}
       </span>
@@ -60,7 +69,10 @@ export function FileItem({
           {dirPath}
         </span>
       )}
-      <span className="commit-file-status" style={{ color: statusColor }}>
+      <span
+        className="commit-file-status"
+        style={{ color: highlighted ? "inherit" : statusColor }}
+      >
         {statusLabel}
       </span>
     </div>
