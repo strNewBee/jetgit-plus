@@ -4,6 +4,7 @@ import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit, LaneInfo, RefInfo } from "../../shared/types/git";
 
 export const ROW_HEIGHT = 28;
+export const COMMIT_COLUMN_GUTTER_WIDTH = 9;
 const COLUMN_WIDTH = 10;
 const GRAPH_PADDING = 6;
 const NODE_TEXT_GAP = 14;
@@ -157,6 +158,16 @@ export interface VisibleColumns {
   hash: boolean;
 }
 
+function ColumnGutter() {
+  return (
+    <span
+      aria-hidden="true"
+      data-commit-column-gutter
+      style={{ width: COMMIT_COLUMN_GUTTER_WIDTH, flexShrink: 0 }}
+    />
+  );
+}
+
 export function CommitRow({
   commit,
   lane,
@@ -306,53 +317,62 @@ export function CommitRow({
 
       {/* Author column */}
       {visibleColumns?.author !== false && (
-        <span
-          style={{
-            flexShrink: 0,
-            width: columnWidths.author,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            opacity: 0.7,
-            paddingLeft: 8,
-          }}
-        >
-          {commit.authorName}
-        </span>
+        <>
+          <ColumnGutter />
+          <span
+            style={{
+              flexShrink: 0,
+              width: columnWidths.author,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              opacity: 0.7,
+              paddingLeft: 8,
+            }}
+          >
+            {commit.authorName}
+          </span>
+        </>
       )}
 
       {/* Date column */}
       {visibleColumns?.date !== false && (
-        <span
-          style={{
-            flexShrink: 0,
-            width: columnWidths.date,
-            textAlign: "right",
-            opacity: 0.5,
-            paddingLeft: 8,
-          }}
-        >
-          {formatDateTime(commit.authorDate)}
-        </span>
+        <>
+          <ColumnGutter />
+          <span
+            style={{
+              flexShrink: 0,
+              width: columnWidths.date,
+              textAlign: "right",
+              opacity: 0.5,
+              paddingLeft: 8,
+            }}
+          >
+            {formatDateTime(commit.authorDate)}
+          </span>
+        </>
       )}
 
       {/* Hash column */}
       {visibleColumns?.hash !== false && (
-        <span
-          style={{
-            flexShrink: 0,
-            width: columnWidths.hash,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            opacity: 0.5,
-            paddingLeft: 8,
-            fontFamily: "monospace",
-            fontSize: "0.9em",
-          }}
-        >
-          {commit.shortHash}
-        </span>
+        <>
+          <ColumnGutter />
+          <span
+            style={{
+              flexShrink: 0,
+              width: columnWidths.hash,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              opacity: 0.5,
+              paddingLeft: 8,
+              fontFamily: "monospace",
+              fontSize: "0.9em",
+            }}
+          >
+            {commit.shortHash}
+          </span>
+        </>
       )}
     </div>
   );

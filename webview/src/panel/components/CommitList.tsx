@@ -6,6 +6,7 @@ import { useGitLogStore } from "../../shared/store/git-log-store-context";
 import type { Commit } from "../../shared/types/git";
 import { CommitContextMenu } from "./CommitContextMenu";
 import {
+  COMMIT_COLUMN_GUTTER_WIDTH,
   type ColumnWidths,
   CommitRow,
   ROW_HEIGHT,
@@ -533,7 +534,7 @@ function ColumnResizeHandle({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 9,
+        width: COMMIT_COLUMN_GUTTER_WIDTH,
         cursor: "col-resize",
         height: "100%",
         display: "flex",
